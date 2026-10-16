@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Fraunces", serif;
+  --font-sans: "Plus Jakarta Sans", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-maroon-950: #35060b;
+  --color-maroon-900: #4d0a11;
+  --color-maroon-800: #680e19;
+  --color-maroon-700: #801323;
+  --color-maroon-600: #9c1b2c;
+  --color-cream-50: #faf7f2;
+  --color-cream-100: #f5efe6;
+  --color-cream-200: #eae1d2;
+  --color-gold-300: #ebd382;
+  --color-gold-400: #dfb24e;
+  --color-gold-500: #c29b38;
+  --color-gold-600: #9e7a20;
+}
+
+/* Custom scrollbar and accessibility focus rings */
+:focus-visible {
+  outline: 2px solid #801323;
+  outline-offset: 2px;
+}

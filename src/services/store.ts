@@ -1,0 +1,1906 @@
+import {
+  MenuItem,
+  Order,
+  OrderStatus,
+  DeliveryPartner,
+  CustomerDetails,
+  FoodCategory,
+  MenuState,
+  MenuSource,
+  OrderItemRecord,
+} from '../types';
+import { INITIAL_MENU_ITEMS, INITIAL_DELIVERY_PARTNERS } from '../data/initialMenu';
+import {
+  validateAndCalculateOrder,
+  generateOrderNumber,
+  OrderValidationResult,
+} from './orderValidator';
+import { supabase, isSupabaseConfigured, createIsolatedAuthClient } from './supabaseClient';
+
+const MENU_STORAGE_KEY = 'mantsa_menu_items_v1';
+const ORDERS_STORAGE_KEY = 'mantsa_orders_v1';
+const PARTNERS_STORAGE_KEY = 'mantsa_delivery_partners_v1';
+const DEACTIVATED_PARTNERS_KEY = 'mantsa_deactivated_riders_v1';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isValidUuid = (val: unknown): val is string =>
+  typeof val === 'string' && val.trim().length > 0 && UUID_REGEX.test(val.trim());
+
+type Listener = () => void;
+
+class AppStore {
+  private menu: MenuItem[] = [];
+  private menuLoading: boolean = false;
+  private menuError: string | null = null;
+  private menuSource: MenuSource = isSupabaseConfigured ? 'supabase' : 'demo';
+  private orders: Order[] = [];
+  private partners: DeliveryPartner[] = [];
+  private partnersLoading: boolean = false;
+  private partnersError: string | null = null;
+  private listeners: Set<Listener> = new Set();
+
+  constructor() {
+    this.init();
+  }
+
+  private init() {
+    // 1. Initial Menu Fetch
+    if (isSupabaseConfigured && supabase) {
+      this.fetchMenuFromSupabase();
+    } else {
+      const savedMenu = localStorage.getItem(MENU_STORAGE_KEY);
+      if (savedMenu) {
+        try {
+          this.menu = JSON.parse(savedMenu);
+        } catch {
+          this.menu = INITIAL_MENU_ITEMS;
+        }
+      } else {
+        this.menu = INITIAL_MENU_ITEMS;
+        this.saveMenuLocally();
+      }
+      this.menuSource = 'demo';
+      this.menuLoading = false;
+      this.menuError = null;
+    }
+
+    // 2. Load Delivery Partners
+    if (isSupabaseConfigured && supabase) {
+      const savedPartners = localStorage.getItem(PARTNERS_STORAGE_KEY);
+      if (savedPartners) {
+        try {
+          const parsed = JSON.parse(savedPartners);
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          this.partners = Array.isArray(parsed)
+            ? parsed.filter((p: any) => uuidRegex.test(String(p?.id || '')))
+            : [];
+        } catch {
+          this.partners = [];
+        }
+      } else {
+        this.partners = [];
+      }
+      this.fetchDeliveryPartnersFromSupabase();
+    } else {
+      const savedPartners = localStorage.getItem(PARTNERS_STORAGE_KEY);
+      if (savedPartners) {
+        try {
+          this.partners = JSON.parse(savedPartners);
+        } catch {
+          this.partners = INITIAL_DELIVERY_PARTNERS;
+        }
+      } else {
+        this.partners = INITIAL_DELIVERY_PARTNERS;
+        this.savePartners();
+      }
+    }
+
+    // 3. Load Orders or Seed 2 Initial Realistic Orders (Only in Demo Mode)
+    if (isSupabaseConfigured && supabase) {
+      // In production mode with Supabase connected: NEVER inject sample/demo orders
+      const savedOrders = localStorage.getItem(ORDERS_STORAGE_KEY);
+      if (savedOrders) {
+        try {
+          const parsed = JSON.parse(savedOrders);
+          this.orders = Array.isArray(parsed)
+            ? parsed.filter((o: any) => !o.isDemo && !String(o.id).startsWith('ord-seed-'))
+            : [];
+        } catch {
+          this.orders = [];
+        }
+      } else {
+        this.orders = [];
+      }
+      this.fetchOrdersFromSupabase();
+    } else {
+      // Demo mode: Load saved orders or seed realistic sample orders
+      const savedOrders = localStorage.getItem(ORDERS_STORAGE_KEY);
+      if (savedOrders) {
+        try {
+          this.orders = JSON.parse(savedOrders);
+        } catch {
+          this.orders = this.getSeedOrders();
+        }
+      } else {
+        this.orders = this.getSeedOrders();
+        this.saveOrders();
+      }
+    }
+  }
+
+  /**
+   * Fetches live menu items from public.menu_items table in Supabase
+   */
+  public async fetchMenuFromSupabase(): Promise<void> {
+    if (!isSupabaseConfigured || !supabase) {
+      this.menuSource = 'demo';
+      this.menuLoading = false;
+      this.menuError = null;
+      if (this.menu.length === 0) {
+        this.menu = [...INITIAL_MENU_ITEMS];
+      }
+      this.notify();
+      return;
+    }
+
+    this.menuLoading = true;
+    this.menuError = null;
+    this.menuSource = 'supabase';
+    this.notify();
+
+    try {
+      const { data, error } = await supabase
+        .from('menu_items')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        this.menuLoading = false;
+        this.menuError = error.message || 'Failed to fetch items from public.menu_items.';
+        this.menuSource = 'supabase';
+        this.notify();
+        return;
+      }
+
+      // Map PostgreSQL fields to UI MenuItem model using canonical column is_veg
+      const mappedItems: MenuItem[] = (data || []).map((row: any) => ({
+        id: String(row.id),
+        name: String(row.name || ''),
+        description: String(row.description || ''),
+        category: (row.category || 'biryani') as FoodCategory,
+        price: Number(row.price) || 0,
+        // Canonical database column is_veg
+        is_veg: Boolean(row.is_veg),
+        is_available: row.is_available !== false,
+        image_url: row.image_url || undefined,
+        portion_info: row.portion_info || undefined,
+        is_bestseller: Boolean(row.is_bestseller),
+        spice_level: (row.spice_level as any) || 'Medium',
+      }));
+
+      this.menu = mappedItems;
+      this.menuLoading = false;
+      this.menuError = null;
+      this.menuSource = 'supabase';
+      this.saveMenuLocally();
+      this.notify();
+    } catch (err: any) {
+      this.menuLoading = false;
+      this.menuError = err?.message || 'Network error connecting to Supabase.';
+      this.menuSource = 'supabase';
+      this.notify();
+    }
+  }
+
+  public loadDemoMenu(): void {
+    if (isSupabaseConfigured && supabase) {
+      return;
+    }
+    this.menu = [...INITIAL_MENU_ITEMS];
+    this.menuSource = 'demo';
+    this.menuLoading = false;
+    this.menuError = null;
+    this.saveMenuLocally();
+    this.notify();
+  }
+
+  public retrySupabaseMenu(): Promise<void> {
+    return this.fetchMenuFromSupabase();
+  }
+
+  public getMenuState(): MenuState {
+    return {
+      items: [...this.menu],
+      isLoading: this.menuLoading,
+      error: this.menuError,
+      source: this.menuSource,
+    };
+  }
+
+  private getSeedOrders(): Order[] {
+    const now = new Date();
+    const thirtyMinsAgo = new Date(now.getTime() - 30 * 60000).toISOString();
+    const fifteenMinsAgo = new Date(now.getTime() - 15 * 60000).toISOString();
+
+    return [
+      {
+        id: 'ord-seed-01',
+        orderNumber: 'MB-2026-8812',
+        isDemo: true,
+        customerName: 'Anand Prakash',
+        customerPhone: '9835124490',
+        deliveryAddress: 'Flat 302, Royal Residency, Tilkamanjhi Chowk',
+        landmark: 'Near Tilkamanjhi Post Office',
+        deliveryNotes: 'Please ring bell twice. Keep biryani piping hot.',
+        items: [
+          {
+            menuItemId: 'mb-01',
+            name: 'Mantsa Special Chicken Dum Biryani',
+            price: 240,
+            quantity: 2,
+            is_veg: false,
+            subtotal: 480,
+          },
+          {
+            menuItemId: 'mb-11',
+            name: 'Special Burani Garlic Raita',
+            price: 60,
+            quantity: 1,
+            is_veg: true,
+            subtotal: 60,
+          },
+          {
+            menuItemId: 'mb-12',
+            name: 'Shahi Firni in Earthen Sakora',
+            price: 90,
+            quantity: 2,
+            is_veg: true,
+            subtotal: 180,
+          },
+        ],
+        subtotal: 720,
+        deliveryFee: 0,
+        packagingFee: 0,
+        totalAmount: 720,
+        paymentMethod: 'COD',
+        status: 'out_for_delivery',
+        deliveryPartnerId: 'dp-01',
+        deliveryPartnerName: 'Raju Kumar',
+        createdAt: thirtyMinsAgo,
+        updatedAt: fifteenMinsAgo,
+        statusHistory: [
+          { status: 'pending', timestamp: thirtyMinsAgo, note: 'Order received via website' },
+          { status: 'accepted', timestamp: new Date(now.getTime() - 25 * 60000).toISOString(), note: 'Kitchen accepted order' },
+          { status: 'preparing', timestamp: new Date(now.getTime() - 22 * 60000).toISOString(), note: 'Dum handi on coals' },
+          { status: 'ready_for_pickup', timestamp: new Date(now.getTime() - 16 * 60000).toISOString(), note: 'Packed & handed to rider' },
+          { status: 'out_for_delivery', timestamp: fifteenMinsAgo, note: 'Raju Kumar is out for delivery' },
+        ],
+      },
+      {
+        id: 'ord-seed-02',
+        orderNumber: 'MB-2026-9045',
+        isDemo: true,
+        customerName: 'Priya Kumari',
+        customerPhone: '9470123391',
+        deliveryAddress: 'House 14, Ghantaghar Bazaar Road',
+        landmark: 'Opposite Central Bank of India',
+        deliveryNotes: 'Medium spicy please.',
+        items: [
+          {
+            menuItemId: 'mb-02',
+            name: 'Royal Mutton Dum Biryani',
+            price: 360,
+            quantity: 1,
+            is_veg: false,
+            subtotal: 360,
+          },
+          {
+            menuItemId: 'mb-05',
+            name: 'Kolkata-Awadhi Chicken Chaap',
+            price: 220,
+            quantity: 1,
+            is_veg: false,
+            subtotal: 220,
+          },
+        ],
+        subtotal: 580,
+        deliveryFee: 0,
+        packagingFee: 0,
+        totalAmount: 580,
+        paymentMethod: 'COD',
+        status: 'preparing',
+        createdAt: fifteenMinsAgo,
+        updatedAt: fifteenMinsAgo,
+        statusHistory: [
+          { status: 'pending', timestamp: fifteenMinsAgo, note: 'Order placed' },
+          { status: 'accepted', timestamp: new Date(now.getTime() - 10 * 60000).toISOString(), note: 'Order accepted' },
+          { status: 'preparing', timestamp: new Date(now.getTime() - 8 * 60000).toISOString(), note: 'Chef preparing fresh portions' },
+        ],
+      },
+    ];
+  }
+
+  private saveMenuLocally() {
+    localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(this.menu));
+    this.notify();
+  }
+
+  private saveOrders() {
+    localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(this.orders));
+    this.notify();
+  }
+
+  private savePartners() {
+    localStorage.setItem(PARTNERS_STORAGE_KEY, JSON.stringify(this.partners));
+    this.notify();
+  }
+
+  private notify() {
+    this.listeners.forEach((listener) => listener());
+  }
+
+  public subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  // --- Delivery Partner Getters ---
+  public getDeliveryPartners(): DeliveryPartner[] {
+    return [...this.partners];
+  }
+
+  public getPartnersLoading(): boolean {
+    return this.partnersLoading;
+  }
+
+  public getPartnersError(): string | null {
+    return this.partnersError;
+  }
+
+  // --- Menu Operations ---
+  public getMenu(): MenuItem[] {
+    return [...this.menu];
+  }
+
+  public async toggleItemAvailability(
+    itemId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const item = this.menu.find((m) => m.id === itemId);
+    if (!item) {
+      return { success: false, error: `Menu item "${itemId}" not found.` };
+    }
+    const newAvailability = !item.is_available;
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await (supabase.rpc as any)(
+          'admin_toggle_menu_availability',
+          {
+            p_item_id: itemId,
+            p_is_available: newAvailability,
+          }
+        );
+
+        if (error) {
+          console.error('[toggleItemAvailability] RPC error:', error);
+          return {
+            success: false,
+            error:
+              error.message ||
+              'Failed to toggle availability via admin_toggle_menu_availability.',
+          };
+        }
+
+        const isSuccess =
+          data === true ||
+          (typeof data === 'object' &&
+            data !== null &&
+            (data as any).success === true);
+
+        if (!isSuccess) {
+          return {
+            success: false,
+            error:
+              (data as any)?.error ||
+              'Server rejected menu availability update.',
+          };
+        }
+      } catch (err: any) {
+        console.error('[toggleItemAvailability] Exception:', err);
+        return {
+          success: false,
+          error:
+            err?.message ||
+            'Unexpected exception during availability toggle.',
+        };
+      }
+    }
+
+    this.menu = this.menu.map((i) =>
+      i.id === itemId ? { ...i, is_available: newAvailability } : i
+    );
+    this.saveMenuLocally();
+    this.notify();
+    return { success: true };
+  }
+
+  public async updateMenuItem(
+    updatedItem: MenuItem
+  ): Promise<{ success: boolean; error?: string }> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await (supabase.rpc as any)(
+          'admin_upsert_menu_item',
+          {
+            p_id: updatedItem.id,
+            p_name: updatedItem.name,
+            p_description: updatedItem.description || null,
+            p_category: updatedItem.category,
+            p_price: updatedItem.price,
+            p_is_veg: updatedItem.is_veg,
+            p_is_available: updatedItem.is_available,
+            p_image_url: updatedItem.image_url || null,
+            p_portion_info: updatedItem.portion_info || null,
+          }
+        );
+
+        if (error) {
+          console.error('[updateMenuItem] RPC error:', error);
+          return {
+            success: false,
+            error:
+              error.message ||
+              'Failed to update menu item via admin_upsert_menu_item.',
+          };
+        }
+
+        const isSuccess =
+          data === true ||
+          (typeof data === 'object' &&
+            data !== null &&
+            (data as any).success === true);
+
+        if (!isSuccess) {
+          return {
+            success: false,
+            error:
+              (data as any)?.error || 'Server rejected menu item update.',
+          };
+        }
+      } catch (err: any) {
+        console.error('[updateMenuItem] Exception:', err);
+        return {
+          success: false,
+          error:
+            err?.message || 'Unexpected exception during menu item update.',
+        };
+      }
+    }
+
+    this.menu = this.menu.map((item) =>
+      item.id === updatedItem.id ? updatedItem : item
+    );
+    this.saveMenuLocally();
+    this.notify();
+    return { success: true };
+  }
+
+  public async addMenuItem(
+    newItem: Omit<MenuItem, 'id'>
+  ): Promise<{ success: boolean; item?: MenuItem; error?: string }> {
+    const id = `mb-custom-${Date.now()}`;
+    const createdItem: MenuItem = { ...newItem, id };
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await (supabase.rpc as any)(
+          'admin_upsert_menu_item',
+          {
+            p_id: id,
+            p_name: createdItem.name,
+            p_description: createdItem.description || null,
+            p_category: createdItem.category,
+            p_price: createdItem.price,
+            p_is_veg: createdItem.is_veg,
+            p_is_available: createdItem.is_available,
+            p_image_url: createdItem.image_url || null,
+            p_portion_info: createdItem.portion_info || null,
+          }
+        );
+
+        if (error) {
+          console.error('[addMenuItem] RPC error:', error);
+          return {
+            success: false,
+            error:
+              error.message ||
+              'Failed to add menu item via admin_upsert_menu_item.',
+          };
+        }
+
+        const isSuccess =
+          data === true ||
+          (typeof data === 'object' &&
+            data !== null &&
+            (data as any).success === true);
+
+        if (!isSuccess) {
+          return {
+            success: false,
+            error:
+              (data as any)?.error ||
+              'Server rejected menu item creation.',
+          };
+        }
+      } catch (err: any) {
+        console.error('[addMenuItem] Exception:', err);
+        return {
+          success: false,
+          error:
+            err?.message || 'Unexpected exception during menu item creation.',
+        };
+      }
+    }
+
+    this.menu.push(createdItem);
+    this.saveMenuLocally();
+    this.notify();
+    return { success: true, item: createdItem };
+  }
+
+  public resetMenuToDefault(): void {
+    this.menu = [...INITIAL_MENU_ITEMS];
+    this.menuSource = 'demo';
+    this.saveMenuLocally();
+  }
+
+  // --- Orders Operations ---
+  public getOrders(): Order[] {
+    return [...this.orders].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+
+  public getOrderById(idOrNumber: string): Order | undefined {
+    const search = idOrNumber.trim().toUpperCase();
+    return this.orders.find(
+      (o) => o.id === idOrNumber || o.orderNumber.toUpperCase() === search
+    );
+  }
+
+  /**
+   * Fetches real live orders from Supabase (for authenticated staff/admin or current session).
+   * Maps delivery assignments from delivery_assignments table without assuming orders.delivery_partner_id.
+   */
+  public async fetchOrdersFromSupabase(): Promise<void> {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error || !data) {
+        return;
+      }
+
+      // Fetch active assignments from delivery_assignments table
+      const assignmentsByOrderId: Record<string, { partnerId: string; partnerName?: string }> = {};
+      try {
+        const { data: assignments } = await supabase
+          .from('delivery_assignments')
+          .select('order_id, delivery_partner_id, profiles(id, full_name)');
+
+        if (assignments && assignments.length > 0) {
+          assignments.forEach((a: any) => {
+            if (a.order_id && a.delivery_partner_id) {
+              const profileRow = Array.isArray(a.profiles) ? a.profiles[0] : a.profiles;
+              const partnerInMem = this.partners.find((p) => p.id === a.delivery_partner_id);
+              assignmentsByOrderId[a.order_id] = {
+                partnerId: a.delivery_partner_id,
+                partnerName: profileRow?.full_name || partnerInMem?.name || 'Assigned Rider',
+              };
+            }
+          });
+        }
+      } catch {
+        // If RLS prevents reading delivery_assignments, continue without error
+      }
+
+      const mappedOrders: Order[] = data.map((row: any) => {
+        const assignment = assignmentsByOrderId[row.id];
+        const existingLocal = this.orders.find((o) => o.id === String(row.id));
+        return {
+          id: String(row.id),
+          orderNumber: String(row.order_number),
+          customerName: String(row.customer_name || 'Customer'),
+          customerPhone: String(row.customer_phone || ''),
+          deliveryAddress: String(row.delivery_address || ''),
+          landmark: String(row.landmark || ''),
+          deliveryNotes: String(row.instructions || ''),
+          items: existingLocal?.items && existingLocal.items.length > 0 ? existingLocal.items : [],
+          subtotal: Number(row.subtotal || 0),
+          deliveryFee: Number(row.delivery_fee || 0),
+          packagingFee: 0,
+          totalAmount: Number(row.total_amount || 0),
+          paymentMethod: 'COD',
+          status: (row.status || 'pending') as OrderStatus,
+          deliveryPartnerId: assignment?.partnerId || existingLocal?.deliveryPartnerId,
+          deliveryPartnerName: assignment?.partnerName || existingLocal?.deliveryPartnerName,
+          createdAt: row.created_at || new Date().toISOString(),
+          updatedAt: row.updated_at || new Date().toISOString(),
+          statusHistory: existingLocal?.statusHistory?.length
+            ? existingLocal.statusHistory
+            : [
+                {
+                  status: (row.status || 'pending') as OrderStatus,
+                  timestamp: row.updated_at || row.created_at || new Date().toISOString(),
+                  note: `Status: ${row.status || 'pending'}`,
+                },
+              ],
+        };
+      });
+
+      this.orders = mappedOrders;
+      this.saveOrders();
+      this.notify();
+    } catch (err) {
+      console.warn('fetchOrdersFromSupabase notice:', err);
+    }
+  }
+
+  /**
+   * Fetches an order from Supabase strictly matching schema constraints:
+   * - If numeric: queries order_number (bigint).
+   * - If UUID: queries id (UUID).
+   * - Never compares a numeric order number against the UUID id column.
+   * - Queries delivery_assignments for rider details without assuming orders.delivery_partner_id.
+   */
+  public async fetchGuestOrder(
+    orderNumberStr: string,
+    trackingToken: string
+  ): Promise<Order | null> {
+    if (!isSupabaseConfigured || !supabase) {
+      return this.getOrderById(orderNumberStr) || null;
+    }
+
+    try {
+      const cleanNumber = orderNumberStr.trim().replace(/^#/, '');
+      if (!/^\d+$/.test(cleanNumber)) {
+        return null;
+      }
+
+      const { data, error } = await (supabase.rpc as any)('track_guest_order', {
+        p_order_number: parseInt(cleanNumber, 10),
+        p_tracking_token: trackingToken.trim(),
+      });
+
+      if (error || !data || (typeof data === 'object' && (data as any).success === false)) {
+        return null;
+      }
+
+      const raw = typeof data === 'string' ? JSON.parse(data) : data;
+      const orderRecord: Order = {
+        id: `ord-${raw.order_number}`,
+        orderNumber: String(raw.order_number),
+        customerName: 'Guest Customer',
+        customerPhone: '',
+        deliveryAddress: 'Doorstep Delivery, Bhagalpur',
+        landmark: '',
+        deliveryNotes: '',
+        trackingToken: trackingToken.trim(),
+        items: (raw.items || []).map((it: any) => ({
+          menuItemId: it.name,
+          name: it.name,
+          price: Number(it.subtotal && it.quantity ? it.subtotal / it.quantity : 0),
+          quantity: Number(it.quantity || 1),
+          is_veg: false,
+          subtotal: Number(it.subtotal || 0),
+        })),
+        subtotal: Number(raw.subtotal || 0),
+        deliveryFee: Number(raw.delivery_fee || 0),
+        packagingFee: 0,
+        totalAmount: Number(raw.total_amount || 0),
+        paymentMethod: 'COD',
+        status: raw.status || 'pending',
+        deliveryPartnerName: raw.rider_name || undefined,
+        createdAt: raw.created_at || new Date().toISOString(),
+        updatedAt: raw.updated_at || new Date().toISOString(),
+        statusHistory: [
+          {
+            status: raw.status || 'pending',
+            timestamp: raw.updated_at || new Date().toISOString(),
+            note: 'Live status synced from kitchen database.',
+          },
+        ],
+      };
+
+      return orderRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  public async fetchLiveOrder(
+    idOrNumber: string,
+    trackingToken?: string
+  ): Promise<Order | null> {
+    const local = this.getOrderById(idOrNumber);
+
+    // If tracking token is available (either passed directly or remembered in local store), use secure guest tracking RPC
+    const token = trackingToken || local?.trackingToken;
+    const cleanNum = idOrNumber.trim().replace(/^#/, '');
+    if (token && /^\d+$/.test(cleanNum)) {
+      const guestOrder = await this.fetchGuestOrder(cleanNum, token);
+      if (guestOrder) {
+        return guestOrder;
+      }
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      return local || null;
+    }
+
+    try {
+      const trimmed = idOrNumber.trim();
+      const isNumeric = /^\d+$/.test(trimmed);
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+
+      // Task 2: Never compare a non-UUID to UUID column id, and never compare non-numeric to order_number
+      if (!isNumeric && !isUuid) {
+        return local || null;
+      }
+
+      let query = supabase.from('orders').select('*');
+      if (isNumeric) {
+        query = query.eq('order_number', parseInt(trimmed, 10));
+      } else {
+        query = query.eq('id', trimmed);
+      }
+
+      const { data, error } = await query.maybeSingle();
+      if (!error && data) {
+        // Fetch order items using actual columns:
+        // id, order_id, menu_item_id, item_name, unit_price, quantity, line_total, created_at
+        const { data: itemRows } = await supabase
+          .from('order_items')
+          .select('*')
+          .eq('order_id', data.id);
+
+        const mappedItems = (itemRows || []).map((it: any) => {
+          const menuItem = this.menu.find((m) => m.id === it.menu_item_id);
+          return {
+            menuItemId: it.menu_item_id || it.id,
+            name: it.item_name || it.name || 'Dish',
+            price: Number(it.unit_price || it.price || 0),
+            quantity: Number(it.quantity || 1),
+            is_veg: menuItem ? menuItem.is_veg : false,
+            subtotal: Number(it.line_total || it.subtotal || 0),
+          };
+        });
+
+        // Task 3: Fetch delivery assignment details from delivery_assignments (not orders)
+        let deliveryPartnerId: string | undefined = undefined;
+        let deliveryPartnerName: string | undefined = undefined;
+
+        try {
+          const { data: assignmentData } = await supabase
+            .from('delivery_assignments')
+            .select('delivery_partner_id, assigned_at, picked_up_at, delivered_at')
+            .eq('order_id', data.id)
+            .order('assigned_at', { ascending: false })
+            .maybeSingle();
+
+          if (assignmentData?.delivery_partner_id) {
+            deliveryPartnerId = assignmentData.delivery_partner_id;
+            const partnerInMem = this.partners.find((p) => p.id === deliveryPartnerId);
+            if (partnerInMem) {
+              deliveryPartnerName = partnerInMem.name;
+            } else {
+              const { data: profileData } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', deliveryPartnerId)
+                .maybeSingle();
+              if (profileData?.full_name) {
+                deliveryPartnerName = profileData.full_name;
+              }
+            }
+          }
+        } catch {
+          // If RLS denies reading delivery_assignments, order tracking still succeeds
+        }
+
+        const liveOrder: Order = {
+          id: String(data.id),
+          orderNumber: String(data.order_number),
+          customerName: String(data.customer_name || 'Customer'),
+          customerPhone: String(data.customer_phone || ''),
+          deliveryAddress: String(data.delivery_address || ''),
+          landmark: String(data.landmark || ''),
+          deliveryNotes: String(data.instructions || ''),
+          items: mappedItems,
+          subtotal: Number(data.subtotal || 0),
+          deliveryFee: Number(data.delivery_fee || 0),
+          packagingFee: 0,
+          totalAmount: Number(data.total_amount || 0),
+          paymentMethod: 'COD',
+          status: data.status || 'pending',
+          deliveryPartnerId,
+          deliveryPartnerName,
+          createdAt: data.created_at || new Date().toISOString(),
+          updatedAt: data.updated_at || new Date().toISOString(),
+          statusHistory: [
+            {
+              status: data.status || 'pending',
+              timestamp: data.updated_at || data.created_at || new Date().toISOString(),
+              note: `Current order status: ${data.status || 'pending'}`,
+            },
+          ],
+        };
+
+        // Cache or sync with local orders list
+        const existingIdx = this.orders.findIndex(
+          (o) => o.id === liveOrder.id || o.orderNumber === liveOrder.orderNumber
+        );
+        if (existingIdx >= 0) {
+          this.orders[existingIdx] = liveOrder;
+        } else {
+          this.orders.unshift(liveOrder);
+        }
+        this.saveOrders();
+
+        return liveOrder;
+      }
+    } catch (err) {
+      console.warn('fetchLiveOrder fallback notice:', err);
+    }
+
+    return local || null;
+  }
+
+  public async fetchOrdersByPhone(phone: string): Promise<Order[]> {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (!cleanPhone) return [];
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('customer_phone', cleanPhone)
+          .order('created_at', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          const first = data[0];
+          const fullOrder = await this.fetchLiveOrder(String(first.id));
+          if (fullOrder) return [fullOrder];
+        }
+      } catch (err) {
+        console.warn('fetchOrdersByPhone notice:', err);
+      }
+    }
+
+    return this.getOrdersForCustomerPhone(cleanPhone);
+  }
+
+  public getOrdersForCustomerPhone(phone: string): Order[] {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    return this.orders
+      .filter((o) => o.customerPhone.replace(/[^0-9]/g, '').includes(cleanPhone))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public getOrdersForPartner(partnerId: string): Order[] {
+    return this.orders
+      .filter((o) => o.deliveryPartnerId === partnerId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  /**
+   * Places an order with strict server-style validation and business rules:
+   * - Minimum subtotal ₹150
+   * - Delivery fee ₹40 for subtotals ₹150 to ₹498.99; ₹0 at ₹499+
+   * - COD payment method only
+   * 
+   * When Supabase is configured:
+   * - Authenticates anonymously to obtain auth.uid()
+   * - Invocates create_order RPC
+   * - NEVER falls back to local storage if authentication or RPC fails; surfaces errors to user
+   * - Returns order only when database confirms it was saved
+   * 
+   * When Supabase is NOT configured:
+   * - Uses local demo storage mode, tagging order as isDemo: true
+   */
+  public async placeOrder(
+    cartItems: { menuItemId: string; quantity: number }[],
+    customer: CustomerDetails
+  ): Promise<{ success: boolean; order?: Order; errors?: string[] }> {
+    // Production guard: When Supabase is configured, refuse to submit an order unless menu source is 'supabase'
+    if (isSupabaseConfigured && supabase) {
+      if (this.menuSource !== 'supabase' || this.menu.length === 0) {
+        return {
+          success: false,
+          errors: [
+            'Live orders can only be placed from the live Supabase menu. The live menu is currently unavailable or demo mode is active. Please refresh the menu and retry.',
+          ],
+        };
+      }
+    }
+
+    // 1. Authoritative client-side pre-validation & business calculation
+    const validation: OrderValidationResult = validateAndCalculateOrder(
+      cartItems,
+      customer,
+      this.menu
+    );
+
+    if (!validation.isValid) {
+      return { success: false, errors: validation.errors };
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 2. Production Path: Supabase is configured
+    if (isSupabaseConfigured && supabase) {
+      // Step A: Verify membership in live menu - every validated cart item's ID must exist in the currently loaded live Supabase menu
+      const liveMenuIds = new Set(this.menu.map((item) => item.id));
+      const unlistedItems = validation.validatedItems.filter(
+        (item) => !liveMenuIds.has(item.menuItemId)
+      );
+
+      if (unlistedItems.length > 0) {
+        return {
+          success: false,
+          errors: [
+            `One or more items in your cart do not exist in the live database menu (${unlistedItems.map((i) => i.name || i.menuItemId).join(', ')}). Your cart is preserved; please choose from the live menu.`,
+          ],
+        };
+      }
+
+      try {
+        // Step B: Authenticate guest user and strictly verify session & UUID
+        let authenticatedUserId: string | null = null;
+
+        // 1. Check existing session
+        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+        if (sessionErr) {
+          return {
+            success: false,
+            errors: [
+              `Session verification failed: ${sessionErr.message}. Your cart items are preserved. Please check connection and retry.`,
+            ],
+          };
+        }
+
+        const existingUser = sessionData?.session?.user;
+        if (sessionData?.session && existingUser?.id && isValidUuid(existingUser.id)) {
+          authenticatedUserId = existingUser.id;
+        } else {
+          // 2. If no valid session exists, call supabase.auth.signInAnonymously()
+          const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
+          if (anonError) {
+            return {
+              success: false,
+              errors: [
+                `Guest login error: ${anonError.message || 'Unable to establish secure guest session'}. Your cart items are preserved. Please retry.`,
+              ],
+            };
+          }
+
+          // 3. Verify returned result contains a valid data.user.id and a session
+          if (!anonData?.session || !anonData?.user?.id || !isValidUuid(anonData.user.id)) {
+            return {
+              success: false,
+              errors: [
+                'Unable to establish a verified guest user session. Your cart items are preserved. Please retry.',
+              ],
+            };
+          }
+
+          // 4. After sign-in, retrieve current session again and verify user ID before calling RPC
+          const { data: verifiedSessionData, error: verifyErr } = await supabase.auth.getSession();
+          if (verifyErr) {
+            return {
+              success: false,
+              errors: [
+                `Failed to verify established session: ${verifyErr.message}. Your cart items are preserved. Please retry.`,
+              ],
+            };
+          }
+
+          const confirmedUser = verifiedSessionData?.session?.user;
+          if (!verifiedSessionData?.session || !confirmedUser?.id || !isValidUuid(confirmedUser.id)) {
+            return {
+              success: false,
+              errors: [
+                'Session confirmation failed after guest sign-in. Your cart items are preserved. Please retry.',
+              ],
+            };
+          }
+
+          authenticatedUserId = confirmedUser.id;
+        }
+
+        // 5. Never continue to the RPC if authentication is missing or invalid
+        if (!authenticatedUserId || !isValidUuid(authenticatedUserId)) {
+          return {
+            success: false,
+            errors: [
+              'Authentication validation failed. A valid user session is required to place an order. Your cart items are preserved.',
+            ],
+          };
+        }
+
+        // Step C: Call create_order RPC with exact argument names
+        const rawDigits = customer.phone.replace(/[^0-9]/g, '');
+        const cleanPhone =
+          rawDigits.length === 12 && rawDigits.startsWith('91')
+            ? rawDigits.slice(2)
+            : rawDigits;
+
+        const rpcPayload = {
+          p_customer_name: customer.name.trim(),
+          p_customer_phone: cleanPhone,
+          p_delivery_address: customer.address.trim(),
+          p_landmark: customer.landmark.trim(),
+          p_instructions: customer.instructions?.trim() || null,
+          p_items: validation.validatedItems.map((item) => ({
+            menu_item_id: item.menuItemId,
+            quantity: item.quantity,
+          })),
+        };
+
+        const { data: rpcData, error: rpcError } = await supabase.rpc(
+          'create_order',
+          rpcPayload
+        );
+
+        if (rpcError) {
+          return {
+            success: false,
+            errors: [
+              `Database rejected order: ${rpcError.message}. Please review details and retry.`,
+            ],
+          };
+        }
+
+        if (!rpcData) {
+          return {
+            success: false,
+            errors: [
+              'Database did not return an order confirmation receipt. Please retry.',
+            ],
+          };
+        }
+
+        // Step C: Parse response (handles JSON string, object, or array from RPC)
+        const parsedData =
+          typeof rpcData === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(rpcData);
+                } catch {
+                  return rpcData;
+                }
+              })()
+            : rpcData;
+        const rawResult = Array.isArray(parsedData) ? parsedData[0] : parsedData;
+        const confirmedId = rawResult?.id || rawResult?.order_id;
+        const confirmedNumber =
+          rawResult?.order_number != null ? String(rawResult.order_number) : undefined;
+
+        if (!confirmedId && !confirmedNumber) {
+          return {
+            success: false,
+            errors: [
+              'Database confirmation was incomplete (missing order ID or number). Please retry.',
+            ],
+          };
+        }
+
+        const createdOrder: Order = {
+          id: String(confirmedId || `ord-${confirmedNumber}`),
+          orderNumber: String(confirmedNumber || confirmedId),
+          customerName: customer.name.trim(),
+          customerPhone: customer.phone.replace(/[^0-9]/g, ''),
+          deliveryAddress: customer.address.trim(),
+          landmark: customer.landmark.trim(),
+          deliveryNotes: customer.instructions?.trim() || '',
+          trackingToken: rawResult?.tracking_token || undefined,
+          items: validation.validatedItems,
+          subtotal: Number(rawResult.subtotal ?? validation.calculatedSubtotal),
+          deliveryFee: Number(rawResult.delivery_fee ?? validation.calculatedDeliveryFee),
+          packagingFee: 0,
+          totalAmount: Number(rawResult.total_amount ?? validation.calculatedTotal),
+          paymentMethod: 'COD',
+          status: rawResult.status || 'pending',
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          statusHistory: [
+            {
+              status: rawResult.status || 'pending',
+              timestamp: nowIso,
+              note: 'Order confirmed and saved in Supabase database. Awaiting kitchen review.',
+            },
+          ],
+        };
+
+        this.orders.unshift(createdOrder);
+        this.saveOrders();
+
+        return { success: true, order: createdOrder };
+      } catch (err: any) {
+        // Critical: Never fall back to local storage when Supabase is configured
+        return {
+          success: false,
+          errors: [
+            `Could not reach database: ${err?.message || 'Network error'}. Your cart items are preserved. Please retry.`,
+          ],
+        };
+      }
+    }
+
+    // 3. Demo Fallback: ONLY active when Supabase is deliberately NOT configured
+    const orderNumber = generateOrderNumber();
+    const demoOrder: Order = {
+      id: `ord-demo-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      orderNumber,
+      isDemo: true,
+      customerName: customer.name.trim(),
+      customerPhone: customer.phone.replace(/[^0-9]/g, ''),
+      deliveryAddress: customer.address.trim(),
+      landmark: customer.landmark.trim(),
+      deliveryNotes: customer.instructions?.trim() || '',
+      items: validation.validatedItems,
+      subtotal: validation.calculatedSubtotal,
+      deliveryFee: validation.calculatedDeliveryFee,
+      packagingFee: validation.calculatedPackagingFee,
+      totalAmount: validation.calculatedTotal,
+      paymentMethod: 'COD',
+      status: 'pending',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      statusHistory: [
+        {
+          status: 'pending',
+          timestamp: nowIso,
+          note: 'Demo order saved locally. Supabase credentials not provided in environment.',
+        },
+      ],
+    };
+
+    this.orders.unshift(demoOrder);
+    this.saveOrders();
+
+    return { success: true, order: demoOrder };
+  }
+
+  public async updateOrderStatus(
+    orderId: string,
+    newStatus: OrderStatus,
+    note?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const orderIndex = this.orders.findIndex((o) => o.id === orderId);
+    if (orderIndex === -1) {
+      return { success: false, error: `Order "${orderId}" not found in local store.` };
+    }
+
+    const order = this.orders[orderIndex];
+    const nowIso = new Date().toISOString();
+
+    if (isSupabaseConfigured && supabase && !order.isDemo) {
+      try {
+        // Verify active session before invoking RPC to prevent unauthenticated 42501 errors
+        const { data: sessionData } = await supabase.auth.getSession();
+        const sessionUser = sessionData?.session?.user;
+
+        if (!sessionUser) {
+          console.warn('[updateOrderStatus] No authenticated Supabase session found. Cannot invoke RPC.');
+          return {
+            success: false,
+            error: 'Authentication required: Active session not found. Please log in to update order status.',
+          };
+        }
+
+        const rpcName =
+          newStatus === 'delivered' ? 'rider_update_order_status' : 'admin_update_order_status';
+
+        const { data, error } = await (supabase.rpc as any)(rpcName, {
+          p_order_id: orderId,
+          p_new_status: newStatus,
+        });
+
+        if (error) {
+          console.warn(`[updateOrderStatus] RPC ${rpcName} returned error:`, error.message);
+          return {
+            success: false,
+            error: error.message || `Failed to update order status to ${newStatus} via ${rpcName}.`,
+          };
+        }
+
+        // Validate confirmed success from RPC response (expected shape { success: true, ... } or JSON object with success property)
+        const isSuccess =
+          data === true ||
+          (typeof data === 'object' && data !== null && (data as any).success === true);
+
+        if (!isSuccess) {
+          const rpcErrorMsg =
+            typeof data === 'object' && data !== null && (data as any).error
+              ? (data as any).error
+              : `RPC ${rpcName} did not confirm success for order "${orderId}".`;
+          console.warn(`[updateOrderStatus] RPC ${rpcName} rejected status change:`, {
+            orderId,
+            newStatus,
+            data,
+          });
+          return {
+            success: false,
+            error: rpcErrorMsg,
+          };
+        }
+      } catch (err: any) {
+        console.warn('[updateOrderStatus] Supabase RPC update exception:', err);
+        return {
+          success: false,
+          error: err?.message || `Unexpected error updating order status to ${newStatus}.`,
+        };
+      }
+    }
+
+    // Database update succeeded (or running in demo mode): Commit state locally
+    const updatedHistory = [
+      ...order.statusHistory,
+      {
+        status: newStatus,
+        timestamp: nowIso,
+        note: note || `Status transitioned to ${newStatus.replace(/_/g, ' ')}`,
+      },
+    ];
+
+    this.orders[orderIndex] = {
+      ...order,
+      status: newStatus,
+      updatedAt: nowIso,
+      statusHistory: updatedHistory,
+    };
+
+    this.saveOrders();
+    this.notify();
+
+    return { success: true };
+  }
+
+  public async assignDeliveryPartner(
+    orderId: string,
+    partnerId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const orderIndex = this.orders.findIndex((o) => o.id === orderId);
+    const nowIso = new Date().toISOString();
+
+    if (orderIndex < 0) {
+      const err = `Order "${orderId}" was not found.`;
+      console.error(err);
+      return { success: false, error: err };
+    }
+
+    const partner = this.partners.find((p) => p.id === partnerId);
+    const partnerName = partner ? partner.name : 'Assigned Rider';
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await (supabase.rpc as any)('admin_assign_delivery_partner', {
+          p_order_id: orderId,
+          p_delivery_partner_id: partnerId,
+        });
+
+        if (error) {
+          console.error('[assignDeliveryPartner] RPC admin_assign_delivery_partner error:', error);
+          // Refresh orders in background so UI displays authoritative winning assignment upon conflicts
+          this.fetchOrdersFromSupabase().catch(() => {});
+          return {
+            success: false,
+            error: error.message || 'Failed to assign delivery partner via admin_assign_delivery_partner.',
+          };
+        }
+
+        // Check RPC response: must explicitly confirm { success: true } or boolean true
+        const isSuccess =
+          data === true ||
+          (typeof data === 'object' && data !== null && (data as any).success === true);
+
+        if (!isSuccess) {
+          const rpcErrorMsg =
+            typeof data === 'object' && data !== null && (data as any).error
+              ? (data as any).error
+              : 'Delivery partner assignment was rejected by server.';
+          console.error('[assignDeliveryPartner] RPC rejected assignment:', { orderId, partnerId, data });
+          // Refresh orders in background to sync authoritative assignment
+          this.fetchOrdersFromSupabase().catch(() => {});
+          return {
+            success: false,
+            error: rpcErrorMsg,
+          };
+        }
+      } catch (err: any) {
+        console.error('[assignDeliveryPartner] Supabase RPC assignment exception:', err);
+        return {
+          success: false,
+          error: err?.message || 'Unexpected exception during delivery partner assignment.',
+        };
+      }
+    }
+
+    // Only update local in-memory state after confirmed RPC success (or in demo mode)
+    const order = this.orders[orderIndex];
+    this.orders[orderIndex] = {
+      ...order,
+      deliveryPartnerId: partnerId,
+      deliveryPartnerName: partnerName,
+      updatedAt: nowIso,
+      statusHistory: [
+        ...order.statusHistory,
+        {
+          status: order.status,
+          timestamp: nowIso,
+          note: `Assigned to delivery partner ${partnerName}`,
+        },
+      ],
+    };
+    this.saveOrders();
+    this.notify();
+
+    return { success: true };
+  }
+
+  public async fetchOrdersForDeliveryPartner(partnerId: string): Promise<void> {
+    if (!isSupabaseConfigured || !supabase || !partnerId) return;
+
+    try {
+      const { data: assignments, error } = await supabase
+        .from('delivery_assignments')
+        .select(`
+          id,
+          order_id,
+          delivery_partner_id,
+          assigned_at,
+          picked_up_at,
+          delivered_at,
+          orders (
+            id,
+            order_number,
+            customer_name,
+            customer_phone,
+            delivery_address,
+            landmark,
+            instructions,
+            subtotal,
+            delivery_fee,
+            total_amount,
+            payment_method,
+            status,
+            created_at,
+            updated_at,
+            order_items (
+              id,
+              menu_item_id,
+              item_name,
+              unit_price,
+              quantity,
+              line_total
+            )
+          )
+        `)
+        .eq('delivery_partner_id', partnerId)
+        .order('assigned_at', { ascending: false });
+
+      if (error) {
+        console.warn('fetchOrdersForDeliveryPartner notice:', error.message);
+        return;
+      }
+
+      if (!assignments || assignments.length === 0) {
+        return;
+      }
+
+      const mappedAssignedOrders: Order[] = [];
+
+      for (const a of assignments) {
+        const orderRow = Array.isArray(a.orders) ? a.orders[0] : a.orders;
+        if (!orderRow) continue;
+
+        const rawItems = Array.isArray(orderRow.order_items) ? orderRow.order_items : [];
+        const mappedItems: OrderItemRecord[] = rawItems.map((it: any) => {
+          const menuItem = this.menu.find((m) => m.id === it.menu_item_id);
+          return {
+            menuItemId: String(it.menu_item_id || it.id),
+            name: String(it.item_name || it.name || 'Dish'),
+            price: Number(it.unit_price || it.price || 0),
+            quantity: Number(it.quantity || 1),
+            is_veg: menuItem ? menuItem.is_veg : false,
+            subtotal: Number(it.line_total || it.subtotal || 0),
+          };
+        });
+
+        const partnerInMem = this.partners.find((p) => p.id === a.delivery_partner_id);
+
+        mappedAssignedOrders.push({
+          id: String(orderRow.id),
+          orderNumber: String(orderRow.order_number),
+          customerName: String(orderRow.customer_name || 'Customer'),
+          customerPhone: String(orderRow.customer_phone || ''),
+          deliveryAddress: String(orderRow.delivery_address || ''),
+          landmark: String(orderRow.landmark || ''),
+          deliveryNotes: String(orderRow.instructions || ''),
+          items: mappedItems,
+          subtotal: Number(orderRow.subtotal || 0),
+          deliveryFee: Number(orderRow.delivery_fee || 0),
+          packagingFee: 0,
+          totalAmount: Number(orderRow.total_amount || 0),
+          paymentMethod: 'COD',
+          status: (orderRow.status || 'pending') as OrderStatus,
+          deliveryPartnerId: String(a.delivery_partner_id),
+          deliveryPartnerName: partnerInMem?.name || 'Delivery Partner',
+          createdAt: orderRow.created_at || a.assigned_at || new Date().toISOString(),
+          updatedAt: orderRow.updated_at || new Date().toISOString(),
+          statusHistory: [
+            {
+              status: (orderRow.status || 'pending') as OrderStatus,
+              timestamp: orderRow.updated_at || orderRow.created_at || new Date().toISOString(),
+              note: `Current delivery status: ${orderRow.status || 'pending'}`,
+            },
+          ],
+        });
+      }
+
+      // Merge newly fetched assigned orders with current local list
+      const assignedIds = new Set(mappedAssignedOrders.map((o) => o.id));
+      const otherOrders = this.orders.filter((o) => !assignedIds.has(o.id));
+      this.orders = [...mappedAssignedOrders, ...otherOrders];
+      this.saveOrders();
+      this.notify();
+    } catch (err) {
+      console.warn('fetchOrdersForDeliveryPartner error:', err);
+    }
+  }
+
+  /**
+   * Fetches registered delivery partner profiles from public.profiles table (accessible to admin).
+   */
+  public async fetchDeliveryPartnersFromSupabase(): Promise<void> {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    this.partnersLoading = true;
+    this.partnersError = null;
+    this.notify();
+
+    try {
+      // 1. Verify active session before querying (unauthenticated callers are blocked by RLS)
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session;
+
+      if (!session?.user) {
+        // If not authenticated, do NOT wipe out existing valid partners from localStorage
+        this.partnersLoading = false;
+        this.notify();
+        return;
+      }
+
+      // 2. Query delivery partners via secure admin RPC function v2
+      // get_delivery_partners_v2 returns (id uuid, full_name text, phone text, role text, created_at timestamptz, is_active boolean)
+      const { data, error } = await supabase.rpc('get_delivery_partners_v2');
+
+      // Safe diagnostic logging (no passwords, tokens, or credentials)
+      console.log('[Delivery Partners RPC v2 Diagnostic]', {
+        userId: session.user.id,
+        userEmail: session.user.email ? `${session.user.email.slice(0, 3)}***` : undefined,
+        dataLength: Array.isArray(data) ? data.length : null,
+        error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
+        partnersSummary: Array.isArray(data)
+          ? data.map((p: any) => ({ id: p.id, role: p.role, hasName: !!p.full_name, isActive: p.is_active }))
+          : null,
+      });
+
+      if (error) {
+        console.error('Failed to fetch delivery partners via RPC get_delivery_partners_v2:', error);
+        this.partnersError = error.message || 'Database error while loading delivery partners.';
+        this.partnersLoading = false;
+        this.notify();
+        return;
+      }
+
+      if (Array.isArray(data)) {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const deliveryProfiles = data.filter((row: any) => {
+          const role = String(row.role || '').trim().toLowerCase();
+          const isDelivery = role === 'delivery' || role === 'delivery_partner';
+          return isDelivery && uuidRegex.test(String(row.id || '').trim());
+        });
+
+        console.log(
+          `[Delivery Partners] Loaded ${deliveryProfiles.length} verified delivery partners via RPC v2.`
+        );
+
+        if (deliveryProfiles.length === 0) {
+          this.partnersError = 'No delivery partners found in database.';
+          this.partners = [];
+        } else {
+          this.partnersError = null;
+
+          // Directly map row.is_active from the database schema; do not rely on localStorage fallback
+          this.partners = deliveryProfiles.map((row: any) => {
+            const partnerId = String(row.id).trim();
+            const activeCount = this.orders.filter(
+              (o) =>
+                o.deliveryPartnerId === partnerId &&
+                o.status !== 'delivered' &&
+                o.status !== 'cancelled'
+            ).length;
+            return {
+              id: partnerId,
+              name: String(row.full_name || 'Delivery Partner').trim(),
+              phone: String(row.phone || '').trim(),
+              vehicle: 'Fleet / Bike',
+              activeOrdersCount: activeCount,
+              createdAt: row.created_at || undefined,
+              isActive: row.is_active !== false,
+            };
+          });
+        }
+
+        this.partnersLoading = false;
+        this.savePartners();
+        this.notify();
+      } else {
+        this.partnersError = 'No delivery partners data returned from server.';
+        this.partnersLoading = false;
+        this.notify();
+      }
+    } catch (err: any) {
+      console.error('fetchDeliveryPartnersFromSupabase exception:', err);
+      this.partnersError = err?.message || 'Unexpected exception loading delivery partners.';
+      this.partnersLoading = false;
+      this.notify();
+    }
+  }
+
+  // --- Rider Management Operations ---
+  
+  public async addDeliveryPartner(params: {
+    fullName: string;
+    phone: string;
+    email: string;
+    password?: string;
+  }): Promise<{ success: boolean; error?: string; partner?: DeliveryPartner }> {
+    const trimmedName = params.fullName.trim();
+    const trimmedPhone = params.phone.trim();
+    const trimmedEmail = params.email.trim().toLowerCase();
+
+    if (!trimmedName) {
+      return { success: false, error: 'Full name is required.' };
+    }
+
+    if (!trimmedPhone) {
+      return { success: false, error: 'Phone number is required.' };
+    }
+
+    if (
+      this.partners.some(
+        (p) =>
+          p.phone === trimmedPhone ||
+          (p.email && p.email.toLowerCase() === trimmedEmail)
+      )
+    ) {
+      return {
+        success: false,
+        error: 'A delivery partner with this phone number or email is already registered.',
+      };
+    }
+
+    // Supabase mode: fail closed; never create Auth users from the browser.
+    if (isSupabaseConfigured && supabase) {
+      if (!params.password || params.password.length < 8) {
+        return {
+          success: false,
+          error: 'A password of at least 8 characters is required.',
+        };
+      }
+
+      if (!trimmedEmail) {
+        return { success: false, error: 'Email is required.' };
+      }
+
+      try {
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+
+        if (sessionError || !sessionData?.session?.user) {
+          return {
+            success: false,
+            error: 'An active administrator session is required.',
+          };
+        }
+
+        const { data: edgeData, error: edgeError } =
+          await supabase.functions.invoke('admin-create-rider', {
+            body: {
+              fullName: trimmedName,
+              phone: trimmedPhone,
+              email: trimmedEmail,
+              password: params.password,
+            },
+          });
+
+        // Do not fall back to browser-side Auth or profile writes.
+        if (edgeError) {
+          console.error('[Add Rider] Server function failed.');
+          return {
+            success: false,
+            error: 'Rider creation failed on the server. Please try again or contact the administrator.',
+          };
+        }
+
+        if (!edgeData?.success || !edgeData?.rider?.id) {
+          return {
+            success: false,
+            error:
+              typeof edgeData?.error === 'string'
+                ? edgeData.error
+                : 'The server did not confirm rider creation.',
+          };
+        }
+
+        await this.fetchDeliveryPartnersFromSupabase();
+
+        const created = this.partners.find(
+          (p) => p.id === edgeData.rider.id
+        );
+
+        return {
+          success: true,
+          partner: created || {
+            id: edgeData.rider.id,
+            name: trimmedName,
+            phone: trimmedPhone,
+            vehicle: 'Fleet / Bike',
+            activeOrdersCount: 0,
+            email: trimmedEmail,
+            isActive: true,
+          },
+        };
+      } catch (err) {
+        console.error('[Add Rider] Unexpected server invocation failure.');
+
+        return {
+          success: false,
+          error: 'Could not create the delivery partner. Please try again.',
+        };
+      }
+    }
+
+    // Demo mode: local-only simulated rider.
+    const newId = `dp-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 6)}`;
+
+    const newPartner: DeliveryPartner = {
+      id: newId,
+      name: trimmedName,
+      phone: trimmedPhone,
+      vehicle: 'Fleet / Bike',
+      activeOrdersCount: 0,
+      email: trimmedEmail,
+      createdAt: new Date().toISOString(),
+      isActive: true,
+    };
+
+    this.partners.push(newPartner);
+    this.savePartners();
+    this.notify();
+
+    return { success: true, partner: newPartner };
+  }
+
+
+  public async updateDeliveryPartner(
+    partnerId: string,
+    updates: { fullName?: string; phone?: string; vehicle?: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    const idx = this.partners.findIndex((p) => p.id === partnerId);
+    if (idx < 0) {
+      return { success: false, error: 'Delivery partner not found.' };
+    }
+
+    const current = this.partners[idx];
+    const newName = updates.fullName !== undefined ? updates.fullName.trim() : current.name;
+    const newPhone = updates.phone !== undefined ? updates.phone.trim() : current.phone;
+    const newVehicle = updates.vehicle !== undefined ? updates.vehicle.trim() : current.vehicle;
+
+    if (!newName) {
+      return { success: false, error: 'Full name is required.' };
+    }
+
+    if (!newPhone) {
+      return { success: false, error: 'Phone number is required.' };
+    }
+
+    // Supabase mode: fail closed; invoke secure server Edge Function
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+
+        if (sessionError || !sessionData?.session?.user) {
+          return {
+            success: false,
+            error: 'An active administrator session is required.',
+          };
+        }
+
+        const { data: edgeData, error: edgeError } =
+          await supabase.functions.invoke('admin-update-rider-profile', {
+            body: {
+              riderId: partnerId,
+              fullName: newName,
+              phone: newPhone,
+            },
+          });
+
+        if (edgeError) {
+          console.error('[Update Rider] Server function failed.');
+          return {
+            success: false,
+            error:
+              'Failed to update delivery partner profile on the server. Please try again.',
+          };
+        }
+
+        if (!edgeData?.success) {
+          return {
+            success: false,
+            error:
+              typeof edgeData?.error === 'string'
+                ? edgeData.error
+                : 'The server did not confirm the profile update.',
+          };
+        }
+
+        await this.fetchDeliveryPartnersFromSupabase();
+        return { success: true };
+      } catch (err) {
+        console.error('[Update Rider] Unexpected server invocation failure.');
+        return {
+          success: false,
+          error: 'Could not update delivery partner profile. Please try again.',
+        };
+      }
+    }
+
+    // Demo Mode: local-only simulated update
+    this.partners[idx] = {
+      ...current,
+      name: newName,
+      phone: newPhone,
+      vehicle: newVehicle,
+    };
+    this.savePartners();
+    this.notify();
+    return { success: true };
+  }
+
+  public async removeDeliveryPartner(
+    partnerId: string,
+    action: 'deactivate' | 'reactivate' = 'deactivate'
+  ): Promise<{ success: boolean; error?: string }> {
+    // 0. Disable permanent deletion to safeguard order history
+    if ((action as any) === 'delete') {
+      return {
+        success: false,
+        error:
+          'Permanent deletion is temporarily disabled to prevent loss of customer order history and delivery audit trails. Please deactivate the rider instead.',
+      };
+    }
+
+    // 1. Guard against modifying admin account
+    if (isSupabaseConfigured && supabase) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.user?.id === partnerId) {
+        return {
+          success: false,
+          error: 'Protection violation: Cannot deactivate the logged-in administrator account.',
+        };
+      }
+    }
+
+    // 2. Check for assigned active orders when deactivating
+    if (action === 'deactivate') {
+      const activeOrders = this.orders.filter(
+        (o) =>
+          o.deliveryPartnerId === partnerId &&
+          o.status !== 'delivered' &&
+          o.status !== 'cancelled'
+      );
+
+      if (activeOrders.length > 0) {
+        return {
+          success: false,
+          error: `Cannot deactivate rider: Rider has ${activeOrders.length} active order(s) (e.g. #${activeOrders[0].orderNumber}). Please reassign or complete these orders first.`,
+        };
+      }
+    }
+
+    // Supabase Mode
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+
+        if (sessionError || !sessionData?.session?.user) {
+          return {
+            success: false,
+            error: 'An active administrator session is required.',
+          };
+        }
+
+        const isReactivating = action === 'reactivate';
+
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke(
+          'admin-toggle-rider-status',
+          {
+            body: {
+              riderId: partnerId,
+              isActive: isReactivating, // Explicit boolean primitive
+            },
+          }
+        );
+
+        if (edgeErr) {
+          let serverMessage = '';
+          try {
+            if (edgeErr.context && typeof edgeErr.context.json === 'function') {
+              const errBody = await edgeErr.context.json();
+              serverMessage = errBody?.error || '';
+            }
+          } catch {}
+
+          console.error('[Toggle Rider Status] Edge function invocation error:', edgeErr.message || serverMessage);
+          return {
+            success: false,
+            error: serverMessage || edgeErr.message || `Failed to ${action} rider via server function.`,
+          };
+        }
+
+        if (!edgeRes?.success) {
+          return {
+            success: false,
+            error:
+              typeof edgeRes?.error === 'string'
+                ? edgeRes.error
+                : `The server rejected rider ${action}.`,
+          };
+        }
+
+        await this.fetchDeliveryPartnersFromSupabase();
+        return { success: true };
+      } catch (err: any) {
+        console.error('[Toggle Rider Status] Edge function call failed:', err);
+        return {
+          success: false,
+          error: `Could not ${action} delivery partner. Please try again.`,
+        };
+      }
+    }
+
+    // Demo Mode
+    const p = this.partners.find((x) => x.id === partnerId);
+    if (p) {
+      p.isActive = action === 'reactivate';
+    }
+    this.savePartners();
+    this.notify();
+    return { success: true };
+  }
+}
+
+export const store = new AppStore();

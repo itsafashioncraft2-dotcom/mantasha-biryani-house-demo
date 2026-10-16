@@ -1,0 +1,9 @@
+{
+  "name": "Mantasha Biryani House - Bhagalpur",
+  "description": "Authentic Dum Biryani, kebabs, and rich Mughlai delights in Bhagalpur, Bihar. Order online for swift doorstep delivery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
+
