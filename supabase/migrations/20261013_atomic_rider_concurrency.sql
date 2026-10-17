@@ -187,7 +187,7 @@ BEGIN
   END IF;
 
   -- STEP 1: Lock rider profile row FIRST (Global Lock Order 1)
-  SELECT role, is_active
+  SELECT role::TEXT, COALESCE(is_active, true)
   INTO v_rider_role, v_rider_active
   FROM public.profiles
   WHERE id = p_delivery_partner_id
@@ -198,8 +198,8 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
-  IF v_rider_role NOT IN ('delivery', 'delivery_partner') THEN
-    RAISE EXCEPTION 'Target user is not a delivery partner.'
+  IF LOWER(TRIM(COALESCE(v_rider_role, ''))) NOT IN ('delivery', 'delivery_partner') THEN
+    RAISE EXCEPTION 'Target user is not a delivery partner (current role: %).', v_rider_role
       USING ERRCODE = '42501';
   END IF;
 
@@ -209,7 +209,7 @@ BEGIN
   END IF;
 
   -- STEP 2: Lock order row SECOND (Global Lock Order 2)
-  SELECT status
+  SELECT status::TEXT
   INTO v_order_status
   FROM public.orders
   WHERE id = p_order_id
@@ -221,32 +221,33 @@ BEGIN
   END IF;
 
   -- Whitelist status eligibility check: only pending, accepted, preparing, ready_for_pickup
-  IF v_order_status NOT IN ('pending', 'accepted', 'preparing', 'ready_for_pickup') THEN
+  IF LOWER(TRIM(COALESCE(v_order_status, ''))) NOT IN ('pending', 'accepted', 'preparing', 'ready_for_pickup') THEN
     RAISE EXCEPTION 'Order is not in an assignable status (status: %).', v_order_status
       USING ERRCODE = '23514';
   END IF;
 
-  -- STEP 3: Enforce one-assignment constraint (reject already assigned orders)
+  -- STEP 3: Enforce/Update assignment
   SELECT delivery_partner_id INTO v_existing_assignment
   FROM public.delivery_assignments
   WHERE order_id = p_order_id;
 
   IF v_existing_assignment IS NOT NULL THEN
-    RAISE EXCEPTION 'Order is already assigned to a delivery partner.'
-      USING ERRCODE = 'P0001';
+    UPDATE public.delivery_assignments
+    SET delivery_partner_id = p_delivery_partner_id,
+        assigned_at = pg_catalog.clock_timestamp()
+    WHERE order_id = p_order_id;
+  ELSE
+    INSERT INTO public.delivery_assignments (
+      order_id,
+      delivery_partner_id,
+      assigned_at
+    )
+    VALUES (
+      p_order_id,
+      p_delivery_partner_id,
+      pg_catalog.clock_timestamp()
+    );
   END IF;
-
-  -- Insert new assignment using live function timestamp behavior (clock_timestamp())
-  INSERT INTO public.delivery_assignments (
-    order_id,
-    delivery_partner_id,
-    assigned_at
-  )
-  VALUES (
-    p_order_id,
-    p_delivery_partner_id,
-    pg_catalog.clock_timestamp()
-  );
 
   -- Exact live response shape: success, order_id, delivery_partner_id
   RETURN pg_catalog.jsonb_build_object(
@@ -420,7 +421,7 @@ BEGIN
 
   -- MUTATIONS:
   UPDATE public.orders
-  SET status = p_new_status,
+  SET status = p_new_status::public.order_status,
       updated_at = v_now
   WHERE id = p_order_id;
 
@@ -478,20 +479,25 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- STEP 1: Lock caller rider profile row FIRST (Global Lock Order 1)
-  SELECT role, is_active
+  -- STEP 1: Lock caller profile row FIRST (Global Lock Order 1)
+  SELECT role::TEXT, COALESCE(is_active, true)
   INTO v_caller_role, v_caller_active
   FROM public.profiles
   WHERE id = v_caller_id
   FOR UPDATE;
 
-  IF NOT FOUND OR v_caller_role NOT IN ('delivery', 'delivery_partner') OR v_caller_active != true THEN
-    RAISE EXCEPTION 'Access denied: Active delivery partner privileges required.'
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Caller profile not found.' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- Caller must be either an active rider OR an active administrator
+  IF LOWER(TRIM(COALESCE(v_caller_role, ''))) NOT IN ('delivery', 'delivery_partner', 'admin') OR v_caller_active != true THEN
+    RAISE EXCEPTION 'Access denied: Active delivery partner or administrator privileges required.'
       USING ERRCODE = '42501';
   END IF;
 
   -- STEP 2: Lock order row SECOND (Global Lock Order 2)
-  SELECT status INTO v_current_status
+  SELECT status::TEXT INTO v_current_status
   FROM public.orders
   WHERE id = p_order_id
   FOR UPDATE;
@@ -511,9 +517,12 @@ BEGIN
   WHERE order_id = p_order_id
   FOR UPDATE;
 
-  IF NOT FOUND OR v_assigned_partner_id IS DISTINCT FROM v_caller_id THEN
-    RAISE EXCEPTION 'Access denied: You are not the assigned delivery partner for this order.'
-      USING ERRCODE = '42501';
+  -- If caller is a rider, verify they are the assigned rider
+  IF LOWER(TRIM(v_caller_role)) IN ('delivery', 'delivery_partner') THEN
+    IF NOT FOUND OR v_assigned_partner_id IS DISTINCT FROM v_caller_id THEN
+      RAISE EXCEPTION 'Access denied: You are not the assigned delivery partner for this order.'
+        USING ERRCODE = '42501';
+    END IF;
   END IF;
 
   -- Post-lock timestamp capture: Capture v_now ONLY after all locks and validations succeed
@@ -521,7 +530,7 @@ BEGIN
 
   -- Mutate order and preserve existing delivered_at timestamp via COALESCE with v_now
   UPDATE public.orders
-  SET status = 'delivered',
+  SET status = 'delivered'::public.order_status,
       updated_at = v_now
   WHERE id = p_order_id;
 

@@ -34,11 +34,53 @@ interface AdminDashboardProps {
   onOpenSupabaseStatus: () => void;
 }
 
+const ADMIN_TAB_STORAGE_KEY = 'kadhai_admin_tab';
+
+const parseInitialAdminTab = (): 'orders' | 'menu' | 'riders' | 'db_schema' => {
+  try {
+    const hash = window.location.hash.toLowerCase();
+    if (hash.includes('menu')) return 'menu';
+    if (hash.includes('riders')) return 'riders';
+    if (hash.includes('db_schema')) return 'db_schema';
+    if (hash.includes('orders')) return 'orders';
+
+    const stored = localStorage.getItem(ADMIN_TAB_STORAGE_KEY);
+    if (stored && ['orders', 'menu', 'riders', 'db_schema'].includes(stored)) {
+      return stored as 'orders' | 'menu' | 'riders' | 'db_schema';
+    }
+  } catch {
+    // ignore
+  }
+  return 'orders';
+};
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onLogout,
   onOpenSupabaseStatus,
 }) => {
-  const [activeTab, setActiveTab] = useState<'orders' | 'menu' | 'riders' | 'db_schema'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'menu' | 'riders' | 'db_schema'>(parseInitialAdminTab);
+
+  const handleSelectTab = (tab: 'orders' | 'menu' | 'riders' | 'db_schema') => {
+    setActiveTab(tab);
+    try {
+      localStorage.setItem(ADMIN_TAB_STORAGE_KEY, tab);
+      window.location.hash = `#admin/${tab}`;
+    } catch {
+      // ignore
+    }
+  };
+
+  // Sync hash and storage on mount or tab change
+  useEffect(() => {
+    try {
+      localStorage.setItem(ADMIN_TAB_STORAGE_KEY, activeTab);
+      if (!window.location.hash.toLowerCase().includes(activeTab)) {
+        window.location.hash = `#admin/${activeTab}`;
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeTab]);
   const [orders, setOrders] = useState<Order[]>(store.getOrders());
   const [menu, setMenu] = useState<MenuItem[]>(store.getMenu());
   const [partners, setPartners] = useState(store.getDeliveryPartners());
@@ -81,6 +123,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   });
   const [menuActionError, setMenuActionError] = useState<string | null>(null);
   const [menuActionSuccess, setMenuActionSuccess] = useState<string | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<MenuItem | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
 
   // Subscribe to store updates and periodic live sync
   useEffect(() => {
@@ -227,6 +271,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       is_veg: item.is_veg,
       portion_info: item.portion_info || '',
     });
+  };
+
+  const confirmDeleteMenuItem = async () => {
+    if (!itemToDelete) return;
+    setIsDeletingItem(true);
+    setMenuActionError(null);
+
+    const result = await store.deleteMenuItem(itemToDelete.id);
+    setIsDeletingItem(false);
+
+    if (!result.success) {
+      setMenuActionError(result.error || `Failed to delete "${itemToDelete.name}".`);
+    } else {
+      setMenuActionSuccess(`"${itemToDelete.name}" deleted successfully.`);
+      setTimeout(() => setMenuActionSuccess(null), 3000);
+      setItemToDelete(null);
+    }
   };
 
   // Rider Management UI states
@@ -491,7 +552,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <div className="flex items-center gap-2 border-b border-[#EAE2D6]">
         <button
           type="button"
-          onClick={() => setActiveTab('orders')}
+          onClick={() => handleSelectTab('orders')}
           className={`px-4 py-2.5 text-sm font-semibold transition-colors border-b-2 cursor-pointer ${
             activeTab === 'orders'
               ? 'border-[#801323] text-[#801323]'
@@ -502,7 +563,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('menu')}
+          onClick={() => handleSelectTab('menu')}
           className={`px-4 py-2.5 text-sm font-semibold transition-colors border-b-2 cursor-pointer ${
             activeTab === 'menu'
               ? 'border-[#801323] text-[#801323]'
@@ -513,7 +574,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('riders')}
+          onClick={() => handleSelectTab('riders')}
           className={`px-4 py-2.5 text-sm font-semibold transition-colors border-b-2 cursor-pointer flex items-center gap-1.5 ${
             activeTab === 'riders'
               ? 'border-[#801323] text-[#801323]'
@@ -525,7 +586,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('db_schema')}
+          onClick={() => handleSelectTab('db_schema')}
           className={`px-4 py-2.5 text-sm font-semibold transition-colors border-b-2 cursor-pointer ${
             activeTab === 'db_schema'
               ? 'border-[#801323] text-[#801323]'
@@ -757,7 +818,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="flex items-start gap-2">
                           <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                           <div>
-                            <span className="font-bold text-rose-900 block">Rider Assignment Failed:</span>
+                            <span className="font-bold text-rose-900 block">Action Failed:</span>
                             <span className="text-rose-700 leading-relaxed">{assignmentErrors[order.id]}</span>
                           </div>
                         </div>
@@ -887,6 +948,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs shadow-2xs">
+            <div className="flex items-center gap-2 text-rose-950 font-semibold">
+              <Trash2 className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>Dish Deletion Enabled: Use the red <strong>"Delete Dish"</strong> button on any row to delete dishes.</span>
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-200 text-rose-900 shrink-0">
+              Active
+            </span>
+          </div>
+
           <div className="flex items-center justify-between">
             <p className="text-xs text-stone-600">
               Manage live dish availability, update prices, or add new chef creations. Changes take effect instantly for all customers.
@@ -901,7 +972,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </button>
           </div>
 
-          <div className="bg-white rounded-xl border border-[#EAE2D6] overflow-hidden">
+          {/* Desktop Table View */}
+          <div className="hidden md:block bg-white rounded-xl border border-[#EAE2D6] overflow-hidden shadow-2xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-stone-700">
                 <thead className="bg-[#FAF7F2] border-b border-[#EAE2D6] font-semibold text-stone-900">
@@ -947,20 +1019,94 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </button>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(item)}
-                          className="px-3 py-1 text-xs font-semibold text-[#801323] hover:bg-[#FAF7F2] rounded border border-[#EAE2D6] cursor-pointer inline-flex items-center gap-1"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          <span>Edit</span>
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(item)}
+                            className="px-3 py-1.5 text-xs font-semibold text-[#801323] bg-[#FAF7F2] hover:bg-[#F2ECE1] rounded-lg border border-[#D5C2AF] cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-2xs"
+                            title={`Edit ${item.name}`}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setItemToDelete(item)}
+                            className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 rounded-lg cursor-pointer inline-flex items-center gap-1.5 transition-all shadow-xs"
+                            title={`Delete ${item.name}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Dish</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Mobile & Tablet Card View (guarantees Delete button is immediately visible without horizontal scrolling) */}
+          <div className="md:hidden space-y-3">
+            {menu.map((item) => (
+              <div
+                key={item.id}
+                className="bg-white rounded-xl border border-[#EAE2D6] p-4 shadow-2xs space-y-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <VegBadge isVeg={item.is_veg} size="sm" />
+                      <h4 className="font-semibold text-sm text-stone-900">{item.name}</h4>
+                    </div>
+                    {item.portion_info && (
+                      <p className="text-[11px] text-stone-500 mt-0.5">{item.portion_info}</p>
+                    )}
+                    <p className="text-xs text-stone-600 line-clamp-1 mt-1">{item.description}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="font-mono font-bold text-base text-[#801323]">
+                      ₹{item.price}
+                    </span>
+                    <span className="block text-[10px] text-stone-400 capitalize">{item.category}</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-[#F2ECE1] flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAvailability(item.id)}
+                    className={`px-3 py-1 rounded-full font-bold text-[11px] cursor-pointer transition-colors ${
+                      item.is_available
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-stone-200 text-stone-600'
+                    }`}
+                  >
+                    {item.is_available ? '● Available' : '○ Sold Out'}
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(item)}
+                      className="px-3 py-1.5 text-xs font-semibold text-[#801323] hover:bg-[#FAF7F2] rounded-lg border border-[#EAE2D6] cursor-pointer inline-flex items-center gap-1.5 transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setItemToDelete(item)}
+                      className="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-600 hover:text-white rounded-lg border border-rose-300 cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-2xs"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Dish</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1395,25 +1541,97 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </label>
               </div>
 
-              <div className="pt-3 flex items-center justify-end gap-3 border-t border-[#EAE2D6]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsEditingItem(null);
-                    setIsAddingItem(false);
-                  }}
-                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold uppercase tracking-wider text-white bg-[#801323] hover:bg-[#680E19] rounded-lg cursor-pointer"
-                >
-                  Save Dish
-                </button>
+              <div className="pt-3 flex items-center justify-between gap-3 border-t border-[#EAE2D6]">
+                {isEditingItem ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const itemToDel = isEditingItem;
+                      setIsEditingItem(null);
+                      setItemToDelete(itemToDel);
+                    }}
+                    className="px-3.5 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-600 hover:text-white rounded-lg border border-rose-300 cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Dish</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingItem(null);
+                      setIsAddingItem(false);
+                    }}
+                    className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-semibold uppercase tracking-wider text-white bg-[#801323] hover:bg-[#680E19] rounded-lg cursor-pointer shadow-xs"
+                  >
+                    Save Dish
+                  </button>
+                </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Menu Item Confirmation Modal */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-[#EAE2D6] overflow-hidden p-6 space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="font-serif text-lg font-bold text-stone-900">
+                Delete Dish from Menu?
+              </h3>
+              <p className="text-xs text-stone-600">
+                Are you sure you want to remove <span className="font-semibold text-stone-900">"{itemToDelete.name}"</span>?
+                This dish will no longer be visible on the menu or customer cart.
+              </p>
+            </div>
+            {menuActionError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+                <span>{menuActionError}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                disabled={isDeletingItem}
+                className="flex-1 py-2 text-xs font-semibold text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteMenuItem}
+                disabled={isDeletingItem}
+                className="flex-1 py-2 text-xs font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
+              >
+                {isDeletingItem ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Dish</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

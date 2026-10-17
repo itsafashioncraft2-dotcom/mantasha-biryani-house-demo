@@ -1,8 +1,20 @@
 import React, { useState, useMemo } from 'react';
 import { MenuItem, FoodCategory, CartItem, MenuState } from '../types';
 import { MenuItemCard } from './MenuItemCard';
-import { Search, Database, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
-
+import {
+  Search,
+  Database,
+  AlertCircle,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  ShieldCheck,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  ExternalLink,
+} from 'lucide-react';
+import { store } from '../services/store';
 import { isSupabaseConfigured } from '../services/supabaseClient';
 
 interface MenuSectionProps {
@@ -12,6 +24,8 @@ interface MenuSectionProps {
   onUpdateQuantity: (itemId: string, newQuantity: number) => void;
   onRetry: () => void;
   onLoadDemo: () => void;
+  isAdmin?: boolean;
+  onNavigateToAdmin?: () => void;
 }
 
 export const MenuSection: React.FC<MenuSectionProps> = ({
@@ -21,10 +35,38 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
   onUpdateQuantity,
   onRetry,
   onLoadDemo,
+  isAdmin = false,
+  onNavigateToAdmin,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<FoodCategory>('all');
   const [dietaryFilter, setDietaryFilter] = useState<'all' | 'veg' | 'non-veg'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Admin dish deletion state
+  const [itemToDelete, setItemToDelete] = useState<MenuItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+
+  const handleConfirmDelete = async () => {
+    if (!itemToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await store.deleteMenuItem(itemToDelete.id);
+      if (!res.success) {
+        setDeleteError(res.error || `Failed to delete "${itemToDelete.name}".`);
+      } else {
+        setDeleteSuccess(`"${itemToDelete.name}" was successfully removed from the menu.`);
+        setItemToDelete(null);
+        setTimeout(() => setDeleteSuccess(null), 3500);
+      }
+    } catch (e: any) {
+      setDeleteError(e?.message || 'Error occurred while deleting dish.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Cart quantity map for instant lookup
   const cartQuantities = useMemo(() => {
@@ -180,6 +222,70 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
         </div>
       )}
 
+      {/* Admin Mode Quick Action Banner */}
+      {isAdmin && (
+        <div className="mb-6 bg-gradient-to-r from-amber-50 to-[#FAF7F2] border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[#801323] text-white flex items-center justify-center shrink-0 shadow-xs">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-stone-900 flex items-center gap-2">
+                <span>Administrator Mode Enabled</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                  Live Menu Edit Active
+                </span>
+              </p>
+              <p className="text-[11px] text-stone-600 mt-0.5">
+                Direct dish deletion is enabled. Use the red <strong className="text-rose-700">Delete Dish</strong> button on each card below, or manage dishes in the Admin Dashboard.
+              </p>
+            </div>
+          </div>
+          {onNavigateToAdmin && (
+            <button
+              type="button"
+              onClick={onNavigateToAdmin}
+              className="px-3.5 py-1.5 text-xs font-semibold text-[#801323] bg-white hover:bg-stone-50 border border-amber-300 rounded-lg cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 self-start sm:self-auto shadow-2xs"
+            >
+              <span>Admin Dashboard Menu</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Delete Feedback Notifications */}
+      {deleteSuccess && (
+        <div className="mb-4 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between shadow-2xs animate-fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold">{deleteSuccess}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDeleteSuccess(null)}
+            className="text-emerald-700 hover:text-emerald-900 p-0.5 cursor-pointer font-bold text-base leading-none"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {deleteError && (
+        <div className="mb-4 p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span className="font-medium">{deleteError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDeleteError(null)}
+            className="text-rose-700 hover:text-rose-900 p-0.5 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Interactive Category Segmented Controls & Dietary Filter */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         {/* Category Tabs */}
@@ -322,8 +428,67 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
               currentQuantity={cartQuantities.get(item.id) || 0}
               onAddToCart={onAddToCart}
               onUpdateQuantity={onUpdateQuantity}
+              isAdmin={isAdmin}
+              onDeleteItem={(it) => setItemToDelete(it)}
+              onEditItem={
+                onNavigateToAdmin
+                  ? () => onNavigateToAdmin()
+                  : undefined
+              }
             />
           ))}
+        </div>
+      )}
+
+      {/* Delete Menu Item Confirmation Modal (Direct from Menu) */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-[#EAE2D6] overflow-hidden p-6 space-y-4 animate-scale-in">
+            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="font-serif text-lg font-bold text-stone-900">
+                Delete Dish from Menu?
+              </h3>
+              <p className="text-xs text-stone-600">
+                Are you sure you want to permanently remove{' '}
+                <strong className="text-stone-900 font-bold">"{itemToDelete.name}"</strong>{' '}
+                (₹{itemToDelete.price}) from the live menu?
+              </p>
+              <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2 mt-2">
+                Note: Past customer orders for this dish will still retain their item names on receipts.
+              </p>
+            </div>
+            <div className="pt-2 flex items-center justify-end gap-3 border-t border-[#EAE2D6]">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg cursor-pointer flex items-center gap-1.5 disabled:opacity-50 transition-colors shadow-xs"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Delete Dish</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>

@@ -251,8 +251,8 @@ AS $$
 BEGIN
   -- Strict verification of admin caller
   IF NOT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid() AND role = 'admin'
+    SELECT 1 FROM public.profiles pr
+    WHERE pr.id = auth.uid() AND pr.role = 'admin'
   ) THEN
     RAISE EXCEPTION 'Access denied: Admin role required.';
   END IF;

@@ -321,10 +321,10 @@ SET search_path = ''
 AS $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid() 
-      AND role = 'admin' 
-      AND is_active = true
+    SELECT 1 FROM public.profiles pr
+    WHERE pr.id = auth.uid() 
+      AND pr.role = 'admin' 
+      AND pr.is_active = true
   ) THEN
     RAISE EXCEPTION 'Access denied: Active administrator privileges required.'
       USING ERRCODE = '42501';
@@ -390,6 +390,11 @@ DECLARE
 BEGIN
   v_caller_id := auth.uid();
   v_now := pg_catalog.clock_timestamp();
+
+  -- If the caller does not have an existing profile row (e.g. anonymous guest checkout), nullify to avoid FK constraint violation
+  IF v_caller_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = v_caller_id) THEN
+    v_caller_id := NULL;
+  END IF;
 
   -- Input Validation
   IF p_customer_name IS NULL OR pg_catalog.btrim(p_customer_name) = '' THEN

@@ -170,9 +170,13 @@ DECLARE
   v_token_expires_at TIMESTAMPTZ;
   v_seen_item_ids TEXT[] := ARRAY[]::TEXT[];
   v_items_count INT;
-BEGIN
   v_caller_id := auth.uid();
   v_now := pg_catalog.clock_timestamp();
+
+  -- If the caller does not have an existing profile row (e.g. anonymous guest checkout), nullify to avoid FK constraint violation
+  IF v_caller_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = v_caller_id) THEN
+    v_caller_id := NULL;
+  END IF;
 
   -- Input Validation: Customer Profile
   IF p_customer_name IS NULL OR pg_catalog.btrim(p_customer_name) = '' THEN
