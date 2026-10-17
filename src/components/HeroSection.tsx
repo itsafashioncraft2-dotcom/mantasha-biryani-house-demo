@@ -1,6 +1,7 @@
 import React from 'react';
 import { DishIllustration } from './DishIllustration';
 import { ArrowRight, Flame, Clock, ShieldAlert } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface HeroSectionProps {
   onOrderNow: () => void;
@@ -17,11 +18,14 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
           {/* Left Text Column */}
           <div className="lg:col-span-7 space-y-6">
-            {/* Authentic Tagline (clean unboxed text, no pills) */}
-            <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-[#801323]">
-              <span>Bhagalpur, Bihar</span>
-              <span aria-hidden="true">·</span>
-              <span>Authentic Dum Handi Heritage</span>
+            {/* Authentic Tagline with Brand Crest */}
+            <div className="flex items-center gap-3">
+              <BrandLogo size="sm" variant="icon" />
+              <div className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-[#801323]">
+                <span>Bhagalpur, Bihar</span>
+                <span aria-hidden="true">·</span>
+                <span>Authentic Dum Handi Heritage</span>
+              </div>
             </div>
 
             {/* Headline with text-wrap: balance */}

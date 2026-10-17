@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#9C172A" />
+      <stop offset="60%" stop-color="#801323" />
+      <stop offset="100%" stop-color="#4A0710" />
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE8A3" />
+      <stop offset="30%" stop-color="#E2B755" />
+      <stop offset="70%" stop-color="#C29B38" />
+      <stop offset="100%" stop-color="#876518" />
+    </linearGradient>
+    <linearGradient id="copper" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#C27A38" />
+      <stop offset="50%" stop-color="#F5B26E" />
+      <stop offset="100%" stop-color="#9E561C" />
+    </linearGradient>
+    <linearGradient id="aroma" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#E08323" />
+      <stop offset="100%" stop-color="#FFE8A3" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <circle cx="60" cy="60" r="56" fill="url(#bg)" />
+  <circle cx="60" cy="60" r="54" stroke="url(#gold)" stroke-width="3" fill="none" />
+  <circle cx="60" cy="60" r="50" stroke="url(#gold)" stroke-width="1" stroke-dasharray="3 3" fill="none" opacity="0.8" />
+
+  <!-- Top Crown Star -->
+  <path d="M60 16 L62.5 22 L68.5 22.5 L64 26.5 L65.5 32 L60 28.5 L54.5 32 L56 26.5 L51.5 22.5 L57.5 22 Z" fill="url(#gold)" />
+
+  <!-- Aroma steam -->
+  <path d="M53 46 C50 41 55 37 52 32" stroke="url(#aroma)" stroke-width="2.5" stroke-linecap="round" fill="none" />
+  <path d="M60 44 C62 38 58 35 60 29" stroke="url(#gold)" stroke-width="2.8" stroke-linecap="round" fill="none" />
+  <path d="M67 46 C70 41 65 37 68 32" stroke="url(#aroma)" stroke-width="2.5" stroke-linecap="round" fill="none" />
+
+  <!-- Dum Handi Pot -->
+  <ellipse cx="60" cy="49" rx="3.5" ry="2" fill="url(#gold)" />
+  <path d="M44 56 C44 50 51 47 60 47 C69 47 76 50 76 56 Z" fill="url(#copper)" />
+  <path d="M41 56 L79 56" stroke="url(#gold)" stroke-width="2.5" stroke-linecap="round" />
+  <path d="M43 58 C41 68 47 79 60 79 C73 79 79 68 77 58 Z" fill="url(#copper)" />
+  <path d="M46 64 C50 70 55 72 60 72 C65 72 70 70 74 64" stroke="url(#gold)" stroke-width="1.5" stroke-linecap="round" fill="none" />
+
+  <!-- Handles -->
+  <path d="M40 60 C37 60 36 63 38 65" stroke="url(#gold)" stroke-width="2.5" stroke-linecap="round" fill="none" />
+  <path d="M80 60 C83 60 84 63 82 65" stroke="url(#gold)" stroke-width="2.5" stroke-linecap="round" fill="none" />
+
+  <!-- Gold Ribbon with Monogram M -->
+  <path d="M32 86 L44 83 L60 85 L76 83 L88 86 L84 94 L60 97 L36 94 Z" fill="url(#gold)" />
+  <text x="60" y="93" text-anchor="middle" fill="#4A0710" font-family="serif" font-size="10" font-weight="900">M</text>
+</svg>

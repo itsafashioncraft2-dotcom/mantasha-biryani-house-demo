@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { VegBadge } from '../VegBadge';
 import { isSupabaseConfigured } from '../../services/supabaseClient';
+import { BrandLogo } from '../BrandLogo';
 
 interface AdminDashboardProps {
   onLogout: () => void;
@@ -442,15 +443,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Top Banner & Title Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white rounded-2xl border border-[#EAE2D6] shadow-xs">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-[#801323]">
-            <span>Mantasha Biryani House Kitchen HQ</span>
-            <span aria-hidden="true">·</span>
-            <span>Bhagalpur Operations</span>
+        <div className="flex items-center gap-3.5">
+          <BrandLogo size="md" variant="icon" />
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-[#801323]">
+              <span>Mantasha Biryani House Kitchen HQ</span>
+              <span aria-hidden="true">·</span>
+              <span>Bhagalpur Operations</span>
+            </div>
+            <h1 className="font-serif text-2xl font-bold text-[#231815]">
+              Admin Control Center
+            </h1>
           </div>
-          <h1 className="font-serif text-2xl font-bold text-[#231815]">
-            Admin Control Center
-          </h1>
         </div>
 
         <div className="flex items-center gap-2">

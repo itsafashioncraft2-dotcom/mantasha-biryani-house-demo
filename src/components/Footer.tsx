@@ -1,5 +1,6 @@
 import React from 'react';
 import { ShieldCheck, MapPin, Clock, Award } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface FooterProps {
   onNavigate: (view: 'home' | 'menu' | 'track' | 'admin' | 'delivery' | 'supabase_status') => void;
@@ -11,10 +12,8 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Brand & Mission */}
-          <div className="space-y-3">
-            <h3 className="font-serif text-2xl font-bold tracking-tight text-[#DFB24E]">
-              Mantasha Biryani House
-            </h3>
+          <div className="space-y-4">
+            <BrandLogo size="md" variant="full" theme="dark" />
             <p className="text-xs text-stone-300 leading-relaxed">
               Authentic Dum Handi Biryani, Mughlai Chaap, and charcoal kebabs in Bhagalpur, Bihar. Prepared with age-old dum pukht techniques and pure desi ghee.
             </p>

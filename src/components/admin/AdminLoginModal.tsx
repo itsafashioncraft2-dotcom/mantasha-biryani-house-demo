@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, ShieldCheck, AlertCircle } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../services/supabaseClient';
+import { BrandLogo } from '../BrandLogo';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -118,10 +119,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-[#EAE2D6] overflow-hidden">
         {/* Header */}
         <div className="p-6 bg-[#801323] text-white text-center">
-          <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3 border border-white/20">
-            <Lock className="w-6 h-6 text-[#DFB24E]" />
+          <div className="flex justify-center mb-3">
+            <BrandLogo size="md" variant="icon" />
           </div>
-          <h3 className="font-serif text-xl font-bold">Mantasha Biryani House Admin Access</h3>
+          <h3 className="font-serif text-xl font-bold">Mantasha Biryani House Admin</h3>
           <p className="text-xs text-stone-200 mt-1">
             Restricted to restaurant owners and kitchen operations staff.
           </p>

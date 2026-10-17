@@ -1,5 +1,6 @@
 import React from 'react';
 import { ShoppingBag, ShieldCheck, Bike } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface HeaderProps {
   cartCount: number;
@@ -16,14 +17,15 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-[#FAF7F2]/95 backdrop-blur-md border-b border-[#EAE2D6] transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between gap-8">
-        {/* Zone 1: Brand Wordmark (Single text element in display face) */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-6">
+        {/* Zone 1: Royal Brand Logo & Wordmark */}
         <button
           type="button"
           onClick={() => onNavigate('home')}
-          className="font-serif text-2xl sm:text-3xl font-extrabold tracking-tight text-[#801323] hover:text-[#680E19] transition-colors whitespace-nowrap shrink-0 text-left cursor-pointer"
+          className="transition-transform duration-200 hover:opacity-95 shrink-0 text-left cursor-pointer"
+          aria-label="Mantasha Biryani House Home"
         >
-          Mantasha Biryani House
+          <BrandLogo size="md" variant="full" />
         </button>
 
         {/* Zone 2: Navigation links */}
