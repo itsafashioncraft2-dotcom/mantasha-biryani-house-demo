@@ -948,15 +948,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
-          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs shadow-2xs">
-            <div className="flex items-center gap-2 text-rose-950 font-semibold">
-              <Trash2 className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>Dish Deletion Enabled: Use the red <strong>"Delete Dish"</strong> button on any row to delete dishes.</span>
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-200 text-rose-900 shrink-0">
-              Active
-            </span>
-          </div>
 
           <div className="flex items-center justify-between">
             <p className="text-xs text-stone-600">

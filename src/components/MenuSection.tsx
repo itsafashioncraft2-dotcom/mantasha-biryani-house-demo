@@ -4,15 +4,12 @@ import { MenuItemCard } from './MenuItemCard';
 import {
   Search,
   Database,
-  AlertCircle,
   RefreshCw,
   Sparkles,
   Trash2,
-  ShieldCheck,
   CheckCircle2,
   AlertTriangle,
   X,
-  ExternalLink,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { isSupabaseConfigured } from '../services/supabaseClient';
@@ -136,123 +133,6 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
           />
         </div>
       </div>
-
-      {/* Database Connection & Source Status Banner */}
-      <div className="mb-6 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-white shadow-2xs">
-        <div className="flex items-center gap-2.5">
-          {menuState.source === 'supabase' ? (
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 shrink-0 animate-pulse" />
-              <div>
-                <span className="font-bold text-emerald-950">
-                  Live Supabase Database
-                </span>
-                <span className="text-stone-500 ml-1.5">
-                  · Connected to <code className="bg-stone-100 px-1 py-0.5 rounded text-stone-700">public.menu_items</code> ({menuState.items.length} {menuState.items.length === 1 ? 'item' : 'items'})
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
-              <div>
-                <span className="font-bold text-amber-950">
-                  {isSupabaseConfigured ? 'Previewing Local Sample Dishes' : 'Demo Mode (Local Sample Menu)'}
-                </span>
-                <span className="text-stone-500 ml-1.5">
-                  · {isSupabaseConfigured ? 'Supabase table public.menu_items is currently empty. Showing local sample dishes for preview.' : 'Supabase connection pending. Showing local sample dishes for preview.'}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
-          {menuState.source === 'supabase' ? (
-            <button
-              type="button"
-              onClick={onRetry}
-              disabled={menuState.isLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 font-semibold text-stone-700 hover:text-stone-900 bg-[#FAF7F2] hover:bg-[#F5EFE6] border border-[#EAE2D6] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${menuState.isLoading ? 'animate-spin' : ''}`} />
-              <span>Refresh Menu</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="flex items-center gap-1.5 px-3 py-1.5 font-semibold text-[#801323] hover:text-[#680E19] bg-[#FAF7F2] hover:bg-[#F5EFE6] border border-[#EAE2D6] rounded-lg transition-colors cursor-pointer"
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>{isSupabaseConfigured ? 'Query Database' : 'Connect to Database'}</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Database Error State Banner */}
-      {menuState.error && (
-        <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-xl space-y-2 text-xs text-rose-900">
-          <div className="flex items-center gap-2 font-bold text-sm text-rose-800">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>Database Error: Failed to fetch from public.menu_items</span>
-          </div>
-          <p className="text-stone-700 pl-6 leading-relaxed">
-            {menuState.error}
-          </p>
-          <div className="pl-6 pt-1 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onRetry}
-              className="px-3.5 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg font-semibold transition-colors cursor-pointer"
-            >
-              Retry Database Connection
-            </button>
-            {!isSupabaseConfigured && (
-              <button
-                type="button"
-                onClick={onLoadDemo}
-                className="px-3.5 py-1.5 bg-white border border-rose-300 text-rose-900 hover:bg-rose-100 rounded-lg font-semibold transition-colors cursor-pointer"
-              >
-                Switch to Demo Menu
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Admin Mode Quick Action Banner */}
-      {isAdmin && (
-        <div className="mb-6 bg-gradient-to-r from-amber-50 to-[#FAF7F2] border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#801323] text-white flex items-center justify-center shrink-0 shadow-xs">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-stone-900 flex items-center gap-2">
-                <span>Administrator Mode Enabled</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                  Live Menu Edit Active
-                </span>
-              </p>
-              <p className="text-[11px] text-stone-600 mt-0.5">
-                Direct dish deletion is enabled. Use the red <strong className="text-rose-700">Delete Dish</strong> button on each card below, or manage dishes in the Admin Dashboard.
-              </p>
-            </div>
-          </div>
-          {onNavigateToAdmin && (
-            <button
-              type="button"
-              onClick={onNavigateToAdmin}
-              className="px-3.5 py-1.5 text-xs font-semibold text-[#801323] bg-white hover:bg-stone-50 border border-amber-300 rounded-lg cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 self-start sm:self-auto shadow-2xs"
-            >
-              <span>Admin Dashboard Menu</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Delete Feedback Notifications */}
       {deleteSuccess && (
