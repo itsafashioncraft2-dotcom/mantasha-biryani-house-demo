@@ -31,12 +31,16 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
   const [orders, setOrders] = useState<Order[]>(
     store.getOrdersForPartner(partner.id)
   );
+  const [availableOrders, setAvailableOrders] = useState<Order[]>(
+    store.getAvailableOrdersForPickup()
+  );
 
   useEffect(() => {
     store.fetchOrdersForDeliveryPartner(partner.id);
 
     const refresh = () => {
       setOrders(store.getOrdersForPartner(partner.id));
+      setAvailableOrders(store.getAvailableOrdersForPickup());
     };
     const unsubscribe = store.subscribe(refresh);
 
@@ -61,32 +65,135 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
     [orders]
   );
 
+  const isOnlineOrder = (order: Order) =>
+    order.paymentMethod === 'ONLINE_RAZORPAY' ||
+    order.paymentStatus === 'paid' ||
+    Boolean(order.paymentId);
+
   const totalCashCollected = useMemo(
-    () => completedDeliveries.reduce((sum, o) => sum + o.totalAmount, 0),
+    () =>
+      completedDeliveries
+        .filter((o) => !isOnlineOrder(o))
+        .reduce((sum, o) => sum + o.totalAmount, 0),
+    [completedDeliveries]
+  );
+
+  const totalOnlinePrepaid = useMemo(
+    () =>
+      completedDeliveries
+        .filter((o) => isOnlineOrder(o))
+        .reduce((sum, o) => sum + o.totalAmount, 0),
     [completedDeliveries]
   );
 
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [actionError, setActionError] = useState<{ orderId: string; message: string } | null>(null);
 
-  const handleMarkDelivered = async (orderId: string) => {
+  const handleStartPickup = async (orderId: string) => {
     setActionInProgress(orderId);
     setActionError(null);
     try {
       const res = await store.updateOrderStatus(
         orderId,
-        'delivered',
-        `Order delivered safely to customer by ${partner.name}. COD collected.`
+        'out_for_delivery',
+        `Rider ${partner.name} picked up order from kitchen and started delivery.`
       );
       if (!res.success) {
-        const errorMsg =
-          res.error?.includes('Active delivery') || res.error?.includes('privileges required')
-            ? 'Access denied: Active delivery partner privileges required. Only the assigned active delivery rider can confirm delivery for this order.'
-            : res.error || 'Failed to confirm delivery in database.';
-        setActionError({ orderId, message: errorMsg });
+        setActionError({ orderId, message: res.error || 'Could not start delivery run.' });
       }
     } catch (err: any) {
-      setActionError({ orderId, message: err?.message || 'Error updating delivery status.' });
+      setActionError({ orderId, message: err?.message || 'Error updating delivery run.' });
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleMarkDelivered = async (order: Order) => {
+    setActionInProgress(order.id);
+    setActionError(null);
+    try {
+      const isOnline = isOnlineOrder(order);
+      const deliveryNote = isOnline
+        ? `Order delivered safely to customer by ${partner.name}. Pre-paid online via Razorpay (No cash collected).`
+        : `Order delivered safely to customer by ${partner.name}. Cash on delivery (₹${order.totalAmount}) collected.`;
+
+      const res = await store.updateOrderStatus(
+        order.id,
+        'delivered',
+        deliveryNote
+      );
+      if (!res.success) {
+        setActionError({
+          orderId: order.id,
+          message: res.error || 'Unable to update delivery status. Please retry.',
+        });
+      }
+    } catch (err: any) {
+      setActionError({
+        orderId: order.id,
+        message: err?.message || 'Error updating delivery status.',
+      });
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleClaimOrder = async (order: Order) => {
+    setActionInProgress(order.id);
+    setActionError(null);
+    try {
+      const assignRes = await store.assignDeliveryPartner(order.id, partner.id);
+      if (!assignRes.success) {
+        setActionError({ orderId: order.id, message: assignRes.error || 'Failed to claim order.' });
+        return;
+      }
+      await store.updateOrderStatus(
+        order.id,
+        'out_for_delivery',
+        `Rider ${partner.name} picked up order from kitchen and started delivery.`
+      );
+    } catch (err: any) {
+      setActionError({ orderId: order.id, message: err?.message || 'Error claiming order.' });
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleClaimAndDeliver = async (order: Order) => {
+    setActionInProgress(order.id);
+    setActionError(null);
+    try {
+      const assignRes = await store.assignDeliveryPartner(order.id, partner.id);
+      if (!assignRes.success) {
+        setActionError({ orderId: order.id, message: assignRes.error || 'Failed to claim order.' });
+        return;
+      }
+      await store.updateOrderStatus(
+        order.id,
+        'out_for_delivery',
+        `Rider ${partner.name} picked up order from kitchen and started delivery.`
+      );
+      const isOnline = isOnlineOrder(order);
+      const deliveryNote = isOnline
+        ? `Order delivered safely to customer by ${partner.name}. Pre-paid online via Razorpay (No cash collected).`
+        : `Order delivered safely to customer by ${partner.name}. Cash on delivery (₹${order.totalAmount}) collected.`;
+
+      const res = await store.updateOrderStatus(
+        order.id,
+        'delivered',
+        deliveryNote
+      );
+      if (!res.success) {
+        setActionError({
+          orderId: order.id,
+          message: res.error || 'Unable to update delivery status. Please retry.',
+        });
+      }
+    } catch (err: any) {
+      setActionError({
+        orderId: order.id,
+        message: err?.message || 'Error updating delivery status.',
+      });
     } finally {
       setActionInProgress(null);
     }
@@ -153,6 +260,11 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
           <div className="mt-2 font-mono tabular-nums text-2xl font-bold text-white">
             ₹{totalCashCollected}
           </div>
+          {totalOnlinePrepaid > 0 && (
+            <div className="text-[10px] text-emerald-200 mt-1 font-sans font-medium">
+              + ₹{totalOnlinePrepaid} (Pre-paid Online)
+            </div>
+          )}
         </div>
       </div>
 
@@ -277,20 +389,49 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* COD Cash Amount Alert */}
-                  <div className="p-3.5 rounded-xl bg-[#FDF9F0] border-2 border-[#C29B38] flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-amber-900 block">
-                        Cash on Delivery (COD)
-                      </span>
-                      <span className="text-xs text-stone-700">
-                        Collect exact amount in cash or ask customer to scan UPI:
+                  {/* Payment Method & Cash Alert */}
+                  {isOnlineOrder(order) ? (
+                    <div className="p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-500 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span className="text-xs uppercase font-extrabold text-emerald-900 tracking-wider">
+                            Paid Online (Razorpay) · Do Not Collect Cash
+                          </span>
+                        </div>
+                        <p className="text-xs text-emerald-800">
+                          Payment already received online. Deliver food package directly to customer without taking cash.
+                        </p>
+                        {order.paymentId && (
+                          <span className="text-[11px] font-mono text-emerald-700 block">
+                            Txn / Payment ID: {order.paymentId}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0 ml-3">
+                        <span className="font-mono text-xl font-extrabold text-emerald-800">
+                          ₹{order.totalAmount}
+                        </span>
+                        <span className="block text-[10px] font-bold text-emerald-600 uppercase">
+                          Prepaid
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-[#FDF9F0] border-2 border-[#C29B38] flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-amber-900 block">
+                          Cash on Delivery (COD)
+                        </span>
+                        <span className="text-xs text-stone-700">
+                          Collect exact amount in cash or ask customer to scan UPI:
+                        </span>
+                      </div>
+                      <span className="font-mono text-xl font-extrabold text-[#801323]">
+                        ₹{order.totalAmount}
                       </span>
                     </div>
-                    <span className="font-mono text-xl font-extrabold text-[#801323]">
-                      ₹{order.totalAmount}
-                    </span>
-                  </div>
+                  )}
 
                   {/* Action Buttons for Rider */}
                   <div className="pt-2 space-y-2">
@@ -312,15 +453,39 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
 
                     <div className="flex flex-col sm:flex-row gap-3">
                       {!isPickedUp ? (
-                        <div className="flex-1 py-3 px-4 text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-center gap-2">
-                          <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span>Awaiting Kitchen Dispatch · Order will become active when dispatched by admin</span>
+                        <div className="flex flex-col sm:flex-row gap-2 flex-1">
+                          <button
+                            type="button"
+                            disabled={actionInProgress === order.id}
+                            onClick={() => handleStartPickup(order.id)}
+                            className="flex-1 py-3 px-4 text-xs font-bold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            {actionInProgress === order.id ? (
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Navigation className="w-4 h-4" />
+                            )}
+                            <span>Pick Up & Start Run</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={actionInProgress === order.id}
+                            onClick={() => handleMarkDelivered(order)}
+                            className="py-3 px-4 text-xs font-bold uppercase tracking-wider text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>
+                              {isOnlineOrder(order)
+                                ? `Deliver (Online ₹${order.totalAmount})`
+                                : `Deliver & Collect ₹${order.totalAmount}`}
+                            </span>
+                          </button>
                         </div>
                       ) : (
                         <button
                           type="button"
                           disabled={actionInProgress === order.id}
-                          onClick={() => handleMarkDelivered(order.id)}
+                          onClick={() => handleMarkDelivered(order)}
                           className="flex-1 py-3 px-4 text-xs font-bold uppercase tracking-wider text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                         >
                           {actionInProgress === order.id ? (
@@ -328,7 +493,11 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                           ) : (
                             <Check className="w-4 h-4" />
                           )}
-                          <span>Confirm Delivered & Cash Collected (₹{order.totalAmount})</span>
+                          <span>
+                            {isOnlineOrder(order)
+                              ? `Confirm Delivered (Payment Received Online · ₹${order.totalAmount})`
+                              : `Confirm Delivered & Cash Collected (₹${order.totalAmount})`}
+                          </span>
                         </button>
                       )}
                     </div>
@@ -339,6 +508,167 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
           })
         )}
       </div>
+
+      {/* Available Kitchen Orders Ready for Pickup & Delivery */}
+      {availableOrders.length > 0 && (
+        <div className="space-y-4 pt-4 border-t border-[#EAE2D6]">
+          <div className="flex items-center justify-between">
+            <h2 className="font-serif text-lg font-bold text-stone-900 flex items-center gap-2">
+              <Bike className="w-5 h-5 text-[#801323]" />
+              <span>Available for Pickup & Delivery</span>
+              <span className="px-2 py-0.5 text-xs font-bold bg-[#801323] text-white rounded-full">
+                {availableOrders.length}
+              </span>
+            </h2>
+            <span className="text-[11px] font-semibold text-[#801323] bg-[#801323]/10 px-2.5 py-1 rounded-full">
+              Ready to Claim
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            {availableOrders.map((order) => (
+              <div
+                key={order.id}
+                className="bg-white rounded-xl border-2 border-amber-300 shadow-sm overflow-hidden"
+              >
+                <div className="p-4 bg-amber-50/60 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] text-amber-800 uppercase font-bold block">
+                      Kitchen Order · Awaiting Rider
+                    </span>
+                    <span className="font-mono text-base font-bold text-[#801323]">
+                      {order.orderNumber}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-200">
+                      {order.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-stone-50 border border-stone-200">
+                    <div className="space-y-1">
+                      <span className="text-xs text-stone-400 uppercase font-semibold">
+                        Customer
+                      </span>
+                      <h3 className="font-serif text-base font-bold text-stone-900">
+                        {order.customerName}
+                      </h3>
+                      <div className="flex items-center gap-1.5 text-xs text-stone-600 font-mono">
+                        <Phone className="w-3.5 h-3.5 text-stone-400" />
+                        <span>+91 {order.customerPhone}</span>
+                      </div>
+                    </div>
+                    <a
+                      href={`tel:${order.customerPhone}`}
+                      className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 self-start sm:self-auto cursor-pointer"
+                    >
+                      <Phone className="w-4 h-4" />
+                      <span>Call Customer</span>
+                    </a>
+                  </div>
+
+                  <div className="p-3 bg-[#FAF7F2] rounded-lg border border-[#EAE2D6] text-xs text-stone-800">
+                    <div className="flex items-center gap-1 text-stone-500 uppercase font-semibold mb-1">
+                      <MapPin className="w-3.5 h-3.5 text-[#801323]" />
+                      <span>Delivery Address (Bhagalpur)</span>
+                    </div>
+                    <p>{order.deliveryAddress}</p>
+                    <p className="mt-1 font-bold text-stone-900">Landmark: {order.landmark}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-xs font-semibold text-stone-500 uppercase block mb-1">
+                      Dishes ({order.items.length})
+                    </span>
+                    <div className="divide-y divide-stone-100 border border-stone-200 rounded-lg p-2.5 text-xs bg-white">
+                      {order.items.map((item, idx) => (
+                        <div key={idx} className="py-1 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <VegBadge isVeg={item.is_veg} size="sm" />
+                            <span>{item.name} × {item.quantity}</span>
+                          </div>
+                          <span className="font-mono text-stone-500">₹{item.subtotal}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Payment Alert Banner */}
+                  {isOnlineOrder(order) ? (
+                    <div className="p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-500 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span className="text-xs uppercase font-extrabold text-emerald-900 tracking-wider">
+                            Paid Online (Razorpay) · Do Not Collect Cash
+                          </span>
+                        </div>
+                        <p className="text-xs text-emerald-800">
+                          Payment already received online. Deliver food package directly to customer without taking cash.
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 ml-3">
+                        <span className="font-mono text-xl font-extrabold text-emerald-800">
+                          ₹{order.totalAmount}
+                        </span>
+                        <span className="block text-[10px] font-bold text-emerald-600 uppercase">
+                          Prepaid
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-[#FDF9F0] border-2 border-[#C29B38] flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-amber-900 block">
+                          Cash on Delivery (COD)
+                        </span>
+                        <span className="text-xs text-stone-700">
+                          Collect exact amount in cash or ask customer to scan UPI:
+                        </span>
+                      </div>
+                      <span className="font-mono text-xl font-extrabold text-[#801323]">
+                        ₹{order.totalAmount}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      disabled={actionInProgress === order.id}
+                      onClick={() => handleClaimOrder(order)}
+                      className="flex-1 py-3 px-4 text-xs font-bold uppercase tracking-wider text-white bg-[#801323] hover:bg-[#680E19] disabled:opacity-50 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {actionInProgress === order.id ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Navigation className="w-4 h-4" />
+                      )}
+                      <span>Pick Up & Start Run</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionInProgress === order.id}
+                      onClick={() => handleClaimAndDeliver(order)}
+                      className="py-3 px-4 text-xs font-bold uppercase tracking-wider text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>
+                        {isOnlineOrder(order)
+                          ? `Deliver (Online ₹${order.totalAmount})`
+                          : `Deliver & Collect ₹${order.totalAmount}`}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Completed History */}
       {completedDeliveries.length > 0 && (
@@ -360,9 +690,16 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                   <span className="text-stone-400 ml-2">({order.landmark})</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="font-mono font-bold text-emerald-700">
-                    ₹{order.totalAmount} COD
-                  </span>
+                  {isOnlineOrder(order) ? (
+                    <span className="font-mono font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>₹{order.totalAmount} · Paid Online</span>
+                    </span>
+                  ) : (
+                    <span className="font-mono font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                      ₹{order.totalAmount} · COD Cash
+                    </span>
+                  )}
                   <span className="text-[10px] text-stone-400">
                     {new Date(order.updatedAt).toLocaleTimeString([], {
                       hour: '2-digit',

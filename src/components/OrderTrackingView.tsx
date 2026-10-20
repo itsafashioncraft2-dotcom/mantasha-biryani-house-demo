@@ -390,9 +390,23 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
                     </div>
                   ))}
 
-                  <div className="pt-2 mt-2 border-t border-[#EAE2D6] flex justify-between font-bold text-sm text-[#801323]">
-                    <span>Total Amount (COD)</span>
-                    <span className="font-mono tabular-nums">
+                  <div className="pt-2 mt-2 border-t border-[#EAE2D6] flex justify-between items-center text-sm">
+                    <div>
+                      {activeOrder.paymentMethod === 'ONLINE_RAZORPAY' || activeOrder.paymentStatus === 'paid' ? (
+                        <div className="flex items-center gap-1.5 text-emerald-700 font-bold">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Paid Online (Razorpay)</span>
+                        </div>
+                      ) : (
+                        <span className="font-bold text-[#801323]">Total to Pay (COD Cash)</span>
+                      )}
+                      {activeOrder.paymentId && (
+                        <span className="text-[10px] text-stone-500 font-mono block">
+                          Ref: {activeOrder.paymentId}
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-mono tabular-nums font-bold text-base text-[#801323]">
                       ₹{activeOrder.totalAmount}
                     </span>
                   </div>

@@ -101,19 +101,41 @@ export const OrderConfirmationModal: React.FC<OrderConfirmationModalProps> = ({
             </div>
           </div>
 
-          {/* Payment COD Summary */}
-          <div className="p-3 bg-[#FDF9F0] rounded-xl border border-[#EAE2D6] flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-[#C29B38]" />
-              <span className="font-medium text-stone-800">Cash on Delivery (COD)</span>
+          {/* Payment Method Receipt Strip */}
+          {order.paymentMethod === 'ONLINE_RAZORPAY' ? (
+            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div>
+                  <span className="font-bold text-emerald-900 block">Paid Online (Razorpay)</span>
+                  {order.paymentId && (
+                    <span className="font-mono text-[10px] text-emerald-700">
+                      Txn: {order.paymentId}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-emerald-700 block text-[10px] uppercase font-semibold">Amount Paid</span>
+                <span className="font-mono font-bold text-base text-emerald-900">
+                  ₹{order.totalAmount}
+                </span>
+              </div>
             </div>
-            <div className="text-right">
-              <span className="text-stone-500 block text-[10px]">Total to pay</span>
-              <span className="font-mono font-bold text-base text-[#801323]">
-                ₹{order.totalAmount}
-              </span>
+          ) : (
+            <div className="p-3 bg-[#FDF9F0] rounded-xl border border-[#EAE2D6] flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#C29B38]" />
+                <span className="font-medium text-stone-800">Cash on Delivery (COD)</span>
+              </div>
+              <div className="text-right">
+                <span className="text-stone-500 block text-[10px]">Total to pay</span>
+                <span className="font-mono font-bold text-base text-[#801323]">
+                  ₹{order.totalAmount}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Action Buttons */}
           <div className="pt-2 space-y-2">

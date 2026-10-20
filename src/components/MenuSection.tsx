@@ -1,18 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { MenuItem, FoodCategory, CartItem, MenuState } from '../types';
+import { isSupabaseConfigured } from '../services/supabaseClient';
 import { MenuItemCard } from './MenuItemCard';
 import {
   Search,
   Database,
-  RefreshCw,
   Sparkles,
-  Trash2,
-  CheckCircle2,
-  AlertTriangle,
-  X,
+  ShoppingBag,
+  ArrowRight,
 } from 'lucide-react';
-import { store } from '../services/store';
-import { isSupabaseConfigured } from '../services/supabaseClient';
 
 interface MenuSectionProps {
   menuState: MenuState;
@@ -21,8 +17,7 @@ interface MenuSectionProps {
   onUpdateQuantity: (itemId: string, newQuantity: number) => void;
   onRetry: () => void;
   onLoadDemo: () => void;
-  isAdmin?: boolean;
-  onNavigateToAdmin?: () => void;
+  onProceedToCheckout?: () => void;
 }
 
 export const MenuSection: React.FC<MenuSectionProps> = ({
@@ -32,38 +27,12 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
   onUpdateQuantity,
   onRetry,
   onLoadDemo,
-  isAdmin = false,
-  onNavigateToAdmin,
+  onProceedToCheckout,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<FoodCategory>('all');
   const [dietaryFilter, setDietaryFilter] = useState<'all' | 'veg' | 'non-veg'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Admin dish deletion state
-  const [itemToDelete, setItemToDelete] = useState<MenuItem | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
-
-  const handleConfirmDelete = async () => {
-    if (!itemToDelete) return;
-    setIsDeleting(true);
-    setDeleteError(null);
-    try {
-      const res = await store.deleteMenuItem(itemToDelete.id);
-      if (!res.success) {
-        setDeleteError(res.error || `Failed to delete "${itemToDelete.name}".`);
-      } else {
-        setDeleteSuccess(`"${itemToDelete.name}" was successfully removed from the menu.`);
-        setItemToDelete(null);
-        setTimeout(() => setDeleteSuccess(null), 3500);
-      }
-    } catch (e: any) {
-      setDeleteError(e?.message || 'Error occurred while deleting dish.');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  const [orderNotice, setOrderNotice] = useState<string | null>(null);
 
   // Cart quantity map for instant lookup
   const cartQuantities = useMemo(() => {
@@ -73,6 +42,31 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
     });
     return map;
   }, [cartItems]);
+
+  const totalCartCount = useMemo(
+    () => cartItems.reduce((acc, ci) => acc + ci.quantity, 0),
+    [cartItems]
+  );
+
+  const cartSubtotal = useMemo(
+    () => cartItems.reduce((acc, ci) => acc + ci.menuItem.price * ci.quantity, 0),
+    [cartItems]
+  );
+
+  const handleOrderClick = () => {
+    if (totalCartCount === 0) {
+      setOrderNotice('Aapka bag abhi khali hai! Kripya upar menu se apni pasandida dish par "+ ADD" dabayein.');
+      const menuSection = document.getElementById('menu-items-grid') || document.getElementById('menu-section');
+      if (menuSection) {
+        menuSection.scrollIntoView({ behavior: 'smooth' });
+      }
+      return;
+    }
+    setOrderNotice(null);
+    if (onProceedToCheckout) {
+      onProceedToCheckout();
+    }
+  };
 
   const categories: { id: FoodCategory; label: string }[] = [
     { id: 'all', label: 'All Items' },
@@ -134,37 +128,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
         </div>
       </div>
 
-      {/* Delete Feedback Notifications */}
-      {deleteSuccess && (
-        <div className="mb-4 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between shadow-2xs animate-fade-in">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span className="font-semibold">{deleteSuccess}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setDeleteSuccess(null)}
-            className="text-emerald-700 hover:text-emerald-900 p-0.5 cursor-pointer font-bold text-base leading-none"
-          >
-            ×
-          </button>
-        </div>
-      )}
-      {deleteError && (
-        <div className="mb-4 p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center justify-between shadow-2xs">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span className="font-medium">{deleteError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setDeleteError(null)}
-            className="text-rose-700 hover:text-rose-900 p-0.5 cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+
 
       {/* Interactive Category Segmented Controls & Dietary Filter */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
@@ -299,8 +263,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
           </button>
         </div>
       ) : (
-        /* MENU GRID */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div id="menu-items-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredItems.map((item) => (
             <MenuItemCard
               key={item.id}
@@ -308,69 +271,75 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
               currentQuantity={cartQuantities.get(item.id) || 0}
               onAddToCart={onAddToCart}
               onUpdateQuantity={onUpdateQuantity}
-              isAdmin={isAdmin}
-              onDeleteItem={(it) => setItemToDelete(it)}
-              onEditItem={
-                onNavigateToAdmin
-                  ? () => onNavigateToAdmin()
-                  : undefined
-              }
             />
           ))}
         </div>
       )}
 
-      {/* Delete Menu Item Confirmation Modal (Direct from Menu) */}
-      {itemToDelete && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-[#EAE2D6] overflow-hidden p-6 space-y-4 animate-scale-in">
-            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center mx-auto">
-              <Trash2 className="w-6 h-6" />
+      {/* Bottom Order & Checkout Action Section */}
+      <div className="mt-12 bg-linear-to-r from-[#2B0B0E] via-[#4A0E17] to-[#801323] text-white rounded-2xl p-6 sm:p-8 shadow-xl border border-[#DFB24E]/30 relative overflow-hidden">
+        {/* Subtle Decorative Glow */}
+        <div className="absolute top-0 right-0 w-72 h-72 bg-[#DFB24E]/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="text-center md:text-left space-y-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-[#DFB24E] text-xs font-semibold uppercase tracking-wider backdrop-blur-xs">
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>Fast Doorstep Delivery · Bhagalpur Hub</span>
             </div>
-            <div className="text-center space-y-1">
-              <h3 className="font-serif text-lg font-bold text-stone-900">
-                Delete Dish from Menu?
-              </h3>
-              <p className="text-xs text-stone-600">
-                Are you sure you want to permanently remove{' '}
-                <strong className="text-stone-900 font-bold">"{itemToDelete.name}"</strong>{' '}
-                (₹{itemToDelete.price}) from the live menu?
-              </p>
-              <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2 mt-2">
-                Note: Past customer orders for this dish will still retain their item names on receipts.
-              </p>
-            </div>
-            <div className="pt-2 flex items-center justify-end gap-3 border-t border-[#EAE2D6]">
-              <button
-                type="button"
-                onClick={() => setItemToDelete(null)}
-                disabled={isDeleting}
-                className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                disabled={isDeleting}
-                className="px-4 py-2 text-xs font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg cursor-pointer flex items-center gap-1.5 disabled:opacity-50 transition-colors shadow-xs"
-              >
-                {isDeleting ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Deleting...</span>
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Yes, Delete Dish</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <h3 className="font-serif text-2xl sm:text-3xl font-bold text-white tracking-tight">
+              Order Fresh Dum Biryani
+            </h3>
+            <p className="text-xs sm:text-sm text-stone-300 max-w-lg leading-relaxed">
+              {totalCartCount > 0 ? (
+                <>
+                  <strong className="text-white font-bold">{totalCartCount} item(s)</strong> selected in your bag (Total: <span className="text-[#DFB24E] font-bold font-mono">₹{cartSubtotal}</span>). Click below to open checkout & enter your delivery details!
+                </>
+              ) : (
+                'Pick your favourite Biryani, Kebab, or Chaap from the menu above and click Order to complete your delivery checkout.'
+              )}
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:w-auto shrink-0">
+            {totalCartCount > 0 && (
+              <div className="hidden sm:flex flex-col items-end pr-1 text-right">
+                <span className="text-[11px] text-stone-300 uppercase tracking-wider font-medium">Bag Total</span>
+                <span className="font-mono text-2xl font-bold text-[#DFB24E]">₹{cartSubtotal}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleOrderClick}
+              className="w-full sm:w-auto px-8 py-4 bg-[#DFB24E] hover:bg-[#E5C158] active:scale-95 text-[#231815] font-bold text-sm uppercase tracking-wider rounded-xl shadow-lg hover:shadow-[#DFB24E]/25 transition-all flex items-center justify-center gap-3 cursor-pointer group"
+            >
+              <ShoppingBag className="w-5 h-5 text-[#801323] group-hover:scale-110 transition-transform" />
+              <span>
+                {totalCartCount > 0 ? `Order Now · Checkout (₹${cartSubtotal})` : 'Order Now / Checkout'}
+              </span>
+              <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Notice for empty bag */}
+        {orderNotice && (
+          <div className="mt-4 p-3.5 bg-amber-500/20 backdrop-blur-md rounded-xl border border-amber-400/30 text-xs text-amber-100 flex items-center justify-between animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-[#DFB24E] shrink-0" />
+              <span>{orderNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOrderNotice(null)}
+              className="text-stone-300 hover:text-white p-1 text-sm font-bold"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
     </section>
   );
 };

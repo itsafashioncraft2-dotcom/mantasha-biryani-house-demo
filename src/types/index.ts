@@ -55,6 +55,8 @@ export interface DeliveryPartner {
   createdAt?: string;
 }
 
+export type PaymentMethod = 'COD' | 'ONLINE_RAZORPAY';
+
 export interface Order {
   id: string;
   orderNumber: string;
@@ -69,7 +71,9 @@ export interface Order {
   deliveryFee: number;
   packagingFee: number;
   totalAmount: number;
-  paymentMethod: 'COD';
+  paymentMethod: PaymentMethod;
+  paymentId?: string;
+  paymentStatus?: 'pending' | 'paid' | 'cod';
   status: OrderStatus;
   deliveryPartnerId?: string;
   deliveryPartnerName?: string;

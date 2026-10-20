@@ -543,7 +543,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <div className="p-4 bg-[#801323] text-white rounded-xl border border-[#680E19]">
           <div className="flex items-center justify-between text-xs text-[#DFB24E]">
-            <span>Total Sales (COD)</span>
+            <span>Total Sales Revenue</span>
             <DollarSign className="w-4 h-4 text-[#DFB24E]" />
           </div>
           <div className="mt-2 font-mono tabular-nums text-2xl font-bold text-white">
@@ -717,7 +717,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       {/* Right: Amount & Quick Actions */}
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="text-right mr-2">
-                          <span className="text-[10px] text-stone-400 uppercase block">COD Bill</span>
+                          {order.paymentMethod === 'ONLINE_RAZORPAY' ? (
+                            <span className="text-[10px] font-bold text-emerald-700 uppercase block tracking-wider">
+                              Paid Online
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-stone-400 uppercase block">COD Bill</span>
+                          )}
                           <span className="font-mono text-base font-bold text-stone-900">
                             ₹{order.totalAmount}
                           </span>
@@ -772,6 +778,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
                           >
                             Dispatch Rider
+                          </button>
+                        )}
+
+                        {order.status === 'out_for_delivery' && (
+                          <button
+                            type="button"
+                            onClick={() => handleStatusChange(order.id, 'delivered')}
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg cursor-pointer flex items-center gap-1 shadow-2xs"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Mark Delivered</span>
                           </button>
                         )}
 
@@ -902,6 +919,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   <strong>Cooking / Delivery Note:</strong> {order.deliveryNotes}
                                 </div>
                               )}
+                              <div>
+                                <strong>Payment:</strong>{' '}
+                                {order.paymentMethod === 'ONLINE_RAZORPAY' ? (
+                                  <span className="font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                    Paid Online (Razorpay) {order.paymentId ? `· Txn: ${order.paymentId}` : ''}
+                                  </span>
+                                ) : (
+                                  <span className="font-semibold text-stone-700 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                                    Cash on Delivery (COD)
+                                  </span>
+                                )}
+                              </div>
                               <div>
                                 <strong>Rider:</strong>{' '}
                                 {order.deliveryPartnerName

@@ -7,6 +7,8 @@ interface HeaderProps {
   onOpenCart: () => void;
   activeView: 'home' | 'menu' | 'track' | 'admin' | 'delivery' | 'supabase_status';
   onNavigate: (view: 'home' | 'menu' | 'track' | 'admin' | 'delivery' | 'supabase_status') => void;
+  isAdmin?: boolean;
+  isRider?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -14,7 +16,14 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
   activeView,
   onNavigate,
+  isAdmin = false,
+  isRider = false,
 }) => {
+  const isStaff =
+    activeView === 'admin' ||
+    activeView === 'delivery' ||
+    isAdmin ||
+    isRider;
   return (
     <header className="sticky top-0 z-40 bg-[#FAF7F2]/95 backdrop-blur-md border-b border-[#EAE2D6] transition-all">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-6">
@@ -89,21 +98,38 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </nav>
 
-        {/* Zone 3: Primary Cart Action */}
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenCart}
-            aria-label={`View cart with ${cartCount} items`}
-            className="relative flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-[#801323] hover:bg-[#680E19] active:scale-95 rounded-lg transition-all shadow-xs whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <ShoppingBag className="w-4 h-4" />
-            <span className="hidden sm:inline">Bag</span>
-            <span className="font-mono tabular-nums bg-[#C29B38] text-white text-xs px-2 py-0.5 rounded-full font-bold">
-              {cartCount}
-            </span>
-          </button>
-        </div>
+        {/* Zone 3: Primary Action - Hidden for Admin & Rider */}
+        {!isStaff ? (
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenCart}
+              aria-label={`View cart with ${cartCount} items`}
+              className="relative flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-[#801323] hover:bg-[#680E19] active:scale-95 rounded-lg transition-all shadow-xs whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span className="hidden sm:inline">Bag</span>
+              <span className="font-mono tabular-nums bg-[#C29B38] text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                {cartCount}
+              </span>
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 shrink-0">
+            {activeView === 'admin' && (
+              <span className="px-3 py-1.5 text-xs font-semibold text-[#801323] bg-[#801323]/8 rounded-lg border border-[#801323]/20 flex items-center gap-1.5 select-none">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Admin Mode</span>
+              </span>
+            )}
+            {activeView === 'delivery' && (
+              <span className="px-3 py-1.5 text-xs font-semibold text-[#801323] bg-[#801323]/8 rounded-lg border border-[#801323]/20 flex items-center gap-1.5 select-none">
+                <Bike className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Rider Portal</span>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Mobile secondary navigation strip */}

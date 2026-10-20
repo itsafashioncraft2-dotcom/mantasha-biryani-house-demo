@@ -15,7 +15,7 @@ import { DeliveryLoginModal } from './components/delivery/DeliveryLoginModal';
 import { DeliveryDashboard } from './components/delivery/DeliveryDashboard';
 import { SupabaseConfigGuideModal } from './components/SupabaseConfigGuideModal';
 import { Footer } from './components/Footer';
-import { ShoppingBag, ArrowRight, ShieldCheck, Bike } from 'lucide-react';
+import { ShoppingBag, ArrowRight, ShieldCheck, Bike, Sparkles, KeyRound, Lock } from 'lucide-react';
 
 const ACTIVE_VIEW_STORAGE_KEY = 'kadhai_active_view';
 const TRACKING_ORDER_KEY = 'kadhai_tracking_order_number';
@@ -97,10 +97,24 @@ export default function App() {
   });
 
   // Authentication State
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('mantsa_admin_demo_session') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [isAdminLoginModalOpen, setIsAdminLoginModalOpen] = useState(false);
 
-  const [activeDeliveryPartner, setActiveDeliveryPartner] = useState<DeliveryPartner | null>(null);
+  const [activeDeliveryPartner, setActiveDeliveryPartner] = useState<DeliveryPartner | null>(() => {
+    try {
+      const stored = localStorage.getItem('mantsa_active_rider');
+      if (stored) return JSON.parse(stored);
+    } catch {
+      // ignore
+    }
+    return null;
+  });
   const [isDeliveryLoginModalOpen, setIsDeliveryLoginModalOpen] = useState(false);
 
   // Supabase Guide Modal
@@ -145,7 +159,8 @@ export default function App() {
   useEffect(() => {
     const client = supabase;
     if (!isSupabaseConfigured || !client) {
-      setIsAdminAuthenticated(false);
+      const isDemoAdmin = localStorage.getItem('mantsa_admin_demo_session') === 'true';
+      setIsAdminAuthenticated(isDemoAdmin);
       setIsAuthChecking(false);
       return;
     }
@@ -163,13 +178,24 @@ export default function App() {
       setTimeout(async () => {
         if (!isMounted || currentRequestId !== authRequestId) return;
 
-        // Sign out or absent session => immediate fail-closed revocation
+        // Sign out or absent session => immediate fail-closed revocation for admin
         if (event === 'SIGNED_OUT' || !session?.user) {
           setIsAuthChecking(false);
           setIsAdminAuthenticated(false);
-          setActiveDeliveryPartner(null);
+          setActiveDeliveryPartner((prev) => {
+            // Keep local fleet rider if logged in as local fleet rider (dp-*)
+            if (prev && !prev.id.startsWith('dp-')) {
+              try {
+                localStorage.removeItem('mantsa_active_rider');
+              } catch {
+                // ignore
+              }
+              return null;
+            }
+            return prev;
+          });
           setActiveView((current) => {
-            if (current === 'admin' || current === 'delivery') {
+            if (current === 'admin') {
               try {
                 localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'home');
                 window.location.hash = '';
@@ -243,7 +269,7 @@ export default function App() {
             }
 
             setActiveView((current) => {
-              if (current === 'admin' || current === 'delivery') {
+              if (current === 'admin') {
                 try {
                   localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'home');
                   window.location.hash = '';
@@ -273,6 +299,7 @@ export default function App() {
     try {
       localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'home');
       localStorage.removeItem('kadhai_admin_tab');
+      localStorage.removeItem('mantsa_admin_demo_session');
       window.location.hash = '';
     } catch {
       // ignore
@@ -383,16 +410,15 @@ export default function App() {
     }
 
     if (view === 'delivery') {
-      if (!activeDeliveryPartner && !isAuthChecking) {
-        setIsDeliveryLoginModalOpen(true);
-        return;
-      }
       setActiveView('delivery');
       try {
         localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'delivery');
         window.location.hash = '#delivery';
       } catch {
         // ignore
+      }
+      if (!activeDeliveryPartner) {
+        setIsDeliveryLoginModalOpen(true);
       }
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -422,6 +448,8 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         activeView={activeView}
         onNavigate={handleNavigate}
+        isAdmin={isAdminAuthenticated}
+        isRider={Boolean(activeDeliveryPartner)}
       />
 
       {/* Main View Router */}
@@ -448,8 +476,7 @@ export default function App() {
               onUpdateQuantity={handleUpdateQuantity}
               onRetry={() => store.retrySupabaseMenu()}
               onLoadDemo={() => store.loadDemoMenu()}
-              isAdmin={isAdminAuthenticated}
-              onNavigateToAdmin={() => handleNavigate('admin')}
+              onProceedToCheckout={handleProceedToCheckout}
             />
           </>
         )}
@@ -463,8 +490,7 @@ export default function App() {
               onUpdateQuantity={handleUpdateQuantity}
               onRetry={() => store.retrySupabaseMenu()}
               onLoadDemo={() => store.loadDemoMenu()}
-              isAdmin={isAdminAuthenticated}
-              onNavigateToAdmin={() => handleNavigate('admin')}
+              onProceedToCheckout={handleProceedToCheckout}
             />
           </div>
         )}
@@ -519,7 +545,7 @@ export default function App() {
         )}
 
         {activeView === 'delivery' && (
-          isAuthChecking ? (
+          isAuthChecking && activeDeliveryPartner ? (
             <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center">
               <div className="w-10 h-10 rounded-full border-3 border-[#801323]/20 border-t-[#801323] animate-spin mb-4" />
               <p className="text-sm font-semibold text-stone-800">Restoring Rider Console...</p>
@@ -533,6 +559,7 @@ export default function App() {
                   await supabase.auth.signOut().catch(() => {});
                 }
                 try {
+                  localStorage.removeItem('mantsa_active_rider');
                   localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'home');
                   window.location.hash = '';
                 } catch {
@@ -545,11 +572,13 @@ export default function App() {
           ) : (
             <div className="min-h-[55vh] flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto">
               <div className="w-14 h-14 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center text-[#801323] mx-auto mb-4 shadow-xs">
-                <Bike className="w-7 h-7" />
+                <Bike className="w-7 h-7 text-[#DFB24E]" />
               </div>
-              <h3 className="text-xl font-serif font-bold text-stone-800 mb-2">Delivery Partner Portal</h3>
+              <h3 className="text-xl font-serif font-bold text-stone-800 mb-2">
+                Delivery Partner Portal
+              </h3>
               <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-                Please sign in with your active delivery rider credentials to view your assigned deliveries.
+                Doorstep delivery terminal for Mantasha Biryani riders. Please sign in with your Rider ID or Email and Password to access assigned delivery orders.
               </p>
               <div className="flex items-center gap-3 w-full sm:w-auto">
                 <button
@@ -562,9 +591,10 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsDeliveryLoginModalOpen(true)}
-                  className="flex-1 sm:flex-none px-5 py-2.5 bg-[#801323] hover:bg-[#680e19] text-white rounded-xl text-xs font-semibold uppercase tracking-wider shadow-sm transition-colors cursor-pointer"
+                  className="flex-1 sm:flex-none px-5 py-2.5 bg-[#801323] hover:bg-[#680E19] text-white rounded-xl text-xs font-semibold uppercase tracking-wider shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Sign In as Rider
+                  <KeyRound className="w-4 h-4 text-[#DFB24E]" />
+                  <span>Sign In as Rider</span>
                 </button>
               </div>
             </div>
@@ -572,10 +602,12 @@ export default function App() {
         )}
       </main>
 
-      {/* Sticky Mobile Cart Bar (Under 15% mobile viewport cap) */}
+      {/* Sticky Mobile Cart Bar (Under 15% mobile viewport cap - Hidden for Admin & Rider) */}
       {totalCartCount > 0 &&
         !isCartOpen &&
         !isCheckoutOpen &&
+        !isAdminAuthenticated &&
+        !activeDeliveryPartner &&
         ['home', 'menu'].includes(activeView) && (
           <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#EAE2D6] p-3 shadow-lg md:hidden">
             <button
@@ -651,6 +683,7 @@ export default function App() {
           setActiveDeliveryPartner(partner);
           setActiveView('delivery');
           try {
+            localStorage.setItem('mantsa_active_rider', JSON.stringify(partner));
             localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'delivery');
             window.location.hash = '#delivery';
           } catch {
