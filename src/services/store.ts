@@ -504,7 +504,7 @@ class AppStore {
     const thirtyMinsAgo = new Date(now.getTime() - 30 * 60000).toISOString();
     const fifteenMinsAgo = new Date(now.getTime() - 15 * 60000).toISOString();
 
-    return [
+    const rawSeedOrders: Order[] = [
       {
         id: 'ord-seed-01',
         orderNumber: 'MB-2026-8812',
@@ -544,8 +544,9 @@ class AppStore {
         deliveryFee: 0,
         packagingFee: 0,
         totalAmount: 720,
-        paymentMethod: 'COD',
-        status: 'out_for_delivery',
+        paymentMethod: 'COD' as PaymentMethod,
+        paymentStatus: 'cod' as const,
+        status: 'out_for_delivery' as OrderStatus,
         deliveryPartnerId: 'dp-01',
         deliveryPartnerName: 'Raju Kumar',
         createdAt: thirtyMinsAgo,
@@ -589,8 +590,9 @@ class AppStore {
         deliveryFee: 0,
         packagingFee: 0,
         totalAmount: 580,
-        paymentMethod: 'COD',
-        status: 'preparing',
+        paymentMethod: 'COD' as PaymentMethod,
+        paymentStatus: 'cod' as const,
+        status: 'preparing' as OrderStatus,
         createdAt: fifteenMinsAgo,
         updatedAt: fifteenMinsAgo,
         statusHistory: [
@@ -599,10 +601,12 @@ class AppStore {
           { status: 'preparing', timestamp: new Date(now.getTime() - 8 * 60000).toISOString(), note: 'Chef preparing fresh portions' },
         ],
       },
-    ].map((o) => {
-      let updated = { ...o };
+    ];
+
+    return rawSeedOrders.map((o: Order): Order => {
+      let updated: Order = { ...o };
       if (this.isOrderMarkedDelivered(o.id, o.orderNumber) && o.status !== 'cancelled') {
-        updated.status = 'delivered' as OrderStatus;
+        updated.status = 'delivered';
       }
       if (o.status === 'delivered') {
         this.markOrderAsDeliveredInRegistry(o.id, o.orderNumber);
